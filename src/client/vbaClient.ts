@@ -567,7 +567,7 @@ try {
         if (-not (Test-Path $dir)) { return 0 }
         $removed = 0
         foreach ($f in (Get-ChildItem -Path $dir -Filter $filter -File)) {
-            $rel = $f.FullName.Substring($baseDir.Length + 1).Replace("\", "/")
+            $rel = $f.FullName.Substring($baseDir.Length + 1).Replace("\\", "/")
             if (-not $expectedFiles.ContainsKey($rel.ToLower())) {
                 Remove-Item $f.FullName -Force
                 Write-Output "删除: $rel"

@@ -37,6 +37,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private onCommand: (msg: WebviewMessage) => void;
+  private version = "0.5.4";
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -45,6 +46,19 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.onCommand = onCommand;
     stateManager.onChange(() => this.refresh());
+    void this.loadVersion();
+  }
+
+  private async loadVersion(): Promise<void> {
+    try {
+      const pkgUri = vscode.Uri.joinPath(this.extensionUri, "package.json");
+      const data = await vscode.workspace.fs.readFile(pkgUri);
+      const pkg = JSON.parse(Buffer.from(data).toString("utf-8"));
+      if (pkg.version) {
+        this.version = pkg.version;
+        this.refresh();
+      }
+    } catch { /* ignore */ }
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -391,7 +405,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 
 <div class="header">
   <div class="header-title">VBA助手</div>
-  <div class="version-line">版本号 v0.5.0</div>
+  <div class="version-line">版本号 v${this.version}</div>
   <div class="notice-line">仅限内部使用，请勿外传</div>
   <div class="status-row">
     <span>服务状态：</span>
