@@ -739,6 +739,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
       stateManager.setRuntime({
         lastSyncDirection: direction,
         lastSyncAt: new Date().toISOString(),
+        lastError: undefined,
         serviceStatus: "synced",
       });
       output.info(summary);
@@ -1272,6 +1273,7 @@ async function syncLocalToVbeQuiet(skipQueue = false): Promise<void> {
       stateManager.setRuntime({
         lastSyncDirection: "local-to-vbe",
         lastSyncAt: new Date().toISOString(),
+        lastError: undefined,
         serviceStatus: "synced",
       });
       output.info(summary);
@@ -1356,6 +1358,7 @@ async function syncVbeToLocalQuiet(skipQueue = false): Promise<void> {
       stateManager.setRuntime({
         lastSyncDirection: "vbe-to-local",
         lastSyncAt: new Date().toISOString(),
+        lastError: undefined,
         serviceStatus: "synced",
       });
       output.info(summary);
