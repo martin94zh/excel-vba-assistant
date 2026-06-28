@@ -20,6 +20,7 @@ import {
   ensureExcelRunning,
   escapePowerShellSingleQuoted,
   runPowerShell,
+  sleep,
   type ExcelComResult,
 } from "../runtime/powershell";
 import { runMacroWithDialogHandling, listExcelDialogs, clickExcelDialog, fillDialogInput } from "./vbaMacroRunner";
@@ -120,8 +121,8 @@ try {
     return output.startsWith("ERROR:") ? output.slice(6) : "Excel COM 调用失败，请检查 Excel 是否正常运行。";
   }
 
-  /** 尝试在 Excel 中打开目标工作簿。Excel 未运行时会自动启动并显示窗口。返回的 details.pid 为 Excel 进程 ID。 */
-  async openWorkbookInExcel(): Promise<ExcelComResult> {
+  /** 尝试在 Excel 中打开目标工作簿（单试一次） */
+  private async tryOpenWorkbookInExcelOnce(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
     const absPath = this.filePath.replace(/\//g, "\\");
     const script = `
@@ -184,6 +185,20 @@ Jr-OpenWorkbook
       }
     }
     return result;
+  }
+
+  /** 尝试在 Excel 中打开目标工作簿，失败时自动重试 3 次。Excel 未运行时会自动启动并显示窗口。返回的 details.pid 为 Excel 进程 ID。 */
+  async openWorkbookInExcel(): Promise<ExcelComResult> {
+    const maxRetries = 3;
+    let lastResult: ExcelComResult | undefined;
+    for (let i = 0; i < maxRetries; i++) {
+      lastResult = await this.tryOpenWorkbookInExcelOnce();
+      if (lastResult.success) return lastResult;
+      if (i < maxRetries - 1) {
+        await sleep(1000);
+      }
+    }
+    return lastResult!;
   }
 
   // ============================================================
