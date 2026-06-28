@@ -943,7 +943,7 @@ function startExcelCloseWatcher(): void {
     }
     const expectedPid = stateManager.get("excelProcessId");
 
-    // 如果记录了 PID，优先直接检查进程是否还存在；进程已死则立即清理
+    // 如果记录了 PID，优先只检查进程是否还存在，避免频繁调用 COM 导致 Excel 进程无法自然退出
     if (expectedPid && expectedPid > 0) {
       const alive = await isExcelProcessAlive(expectedPid);
       if (!alive) {
@@ -951,8 +951,16 @@ function startExcelCloseWatcher(): void {
         await handleExcelClosed();
         return;
       }
+      // 进程还在即认为 Excel 仍存活；不调用 GetActiveObject 维持其运行
+      if (excelUnavailableCount > 0) {
+        output.info("Excel 进程恢复存活，取消关闭计数");
+      }
+      excelUnavailableCount = 0;
+      lastExcelAvailable = true;
+      return;
     }
 
+    // 没有记录 PID 时，退回到 COM 检测
     const check = await isExcelWithWorkbookRunning(workbookPath);
     let available = check.running;
 
@@ -1122,6 +1130,9 @@ Jr-GetExcelPid
 
 /** Excel 关闭后的清理：删除自动创建的同步目录，清空相关状态 */
 async function handleExcelClosed(): Promise<void> {
+  // 第一步：立即停止检测器，避免清理过程中再次触发检测
+  stopExcelCloseWatcher();
+
   // 取消 Excel 窗口置顶，恢复正常状态
   if (stateManager.get("keepExcelOnTop")) {
     await restoreExcelWindowState();
