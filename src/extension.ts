@@ -19,7 +19,7 @@ import { OutputManager } from "./output/outputChannel";
 import { StatusBarManager } from "./status/statusBar";
 import { ExcelVbaPanelProvider, type WebviewMessage, type StatePayload } from "./webview";
 import { VbaClient } from "./client/vbaClient";
-import { escapePowerShellSingleQuoted, runPowerShell } from "./runtime/powershell";
+import { escapePowerShellSingleQuoted, isExcelWorkbookOpen, runPowerShell } from "./runtime/powershell";
 
 const SUPPORTED_EXCEL_EXTENSIONS = ["xlsm", "xlsb", "xlam", "xls"];
 const VBA_FILE_EXTENSIONS = [".bas", ".cls", ".frm", ".wks", ".wbk"];
@@ -1022,25 +1022,25 @@ function startExcelCloseWatcher(): void {
       output.info(`Excel 进程 ${expectedPid} 首次可用，启动宽限期 ${EXCEL_STARTUP_GRACE_PERIOD_MS}ms`);
     }
 
-    // 检查该 PID 下是否仍有任意窗口句柄（不限制类名/可见性，避免最小化误判）
-    const hasWindow = await hasAnyProcessWindow(expectedPid);
-    if (hasWindow !== lastExcelWindowVisible) {
-      lastExcelWindowVisible = hasWindow;
-      output.info(`Excel 进程 ${expectedPid} 窗口存在性变化：${hasWindow ? "PRESENT" : "ABSENT"}`);
+    // 使用 COM 检测目标工作簿是否仍被 Excel 打开（句柄/可见性检测不可靠）
+    const workbookOpen = await isExcelWorkbookOpen(workbookPath);
+    if (workbookOpen !== lastExcelWindowVisible) {
+      lastExcelWindowVisible = workbookOpen;
+      output.info(`Excel 工作簿状态变化：${workbookOpen ? "PRESENT" : "ABSENT"}`);
     }
 
-    if (!hasWindow) {
+    if (!workbookOpen) {
       const inGracePeriod = (Date.now() - excelFirstSeenAliveAt) < EXCEL_STARTUP_GRACE_PERIOD_MS;
       if (inGracePeriod) {
-        output.info(`Excel 进程 ${expectedPid} 窗口尚未创建，处于启动宽限期，暂不清理`);
+        output.info(`Excel 工作簿尚未打开，处于启动宽限期，暂不清理`);
         return;
       }
       excelUnavailableCount++;
       output.warn(
-        `Excel 进程 ${expectedPid} 仍在运行，但已无窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
+        `Excel 进程 ${expectedPid} 仍在运行，但未检测到目标工作簿（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
       );
       if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {
-        output.info("Excel 已无窗口且进程残留，执行关闭清理");
+        output.info("Excel 未打开目标工作簿，执行关闭清理");
         await handleExcelClosed();
         excelUnavailableCount = 0;
       }
@@ -1049,7 +1049,7 @@ function startExcelCloseWatcher(): void {
     }
 
     if (excelUnavailableCount > 0) {
-      output.info("Excel 窗口恢复，取消关闭计数");
+      output.info("Excel 工作簿恢复，取消关闭计数");
     }
     excelUnavailableCount = 0;
     lastExcelAvailable = true;

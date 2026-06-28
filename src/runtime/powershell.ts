@@ -128,6 +128,44 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 }
 
 /**
+ * 通过 COM 检查 Excel 是否仍打开指定路径的工作簿。
+ * 所有 COM 对象均显式释放，避免残留引用导致 Excel 无法退出。
+ */
+export async function isExcelWorkbookOpen(workbookPath: string): Promise<boolean> {
+  const script = `
+$ErrorActionPreference = "Stop"
+$excel = $null
+$workbooks = $null
+$wb = $null
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $workbooks = $excel.Workbooks
+    $found = $false
+    for ($i = 1; $i -le $workbooks.Count; $i++) {
+        $wb = $workbooks.Item($i)
+        if ($wb.FullName -eq '${escapePowerShellSingleQuoted(workbookPath)}') {
+            $found = $true
+            break
+        }
+        [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb)
+        $wb = $null
+    }
+    if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
+} catch {
+    Write-Output "ABSENT"
+} finally {
+    if ($wb -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb); $wb = $null }
+    if ($workbooks -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks); $workbooks = $null }
+    if ($excel -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel); $excel = $null }
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+`;
+  const result = await runPowerShell(script, 10000);
+  return result.success && (result.output || "").trim() === "PRESENT";
+}
+
+/**
  * 检查 Excel 是否正在运行且已打开目标工作簿。
  * 返回非 null 表示前置条件不满足，应直接返回该错误结果。
  */
