@@ -35,6 +35,7 @@ interface PendingChange {
   timestamp: number;
 }
 
+let extensionContext: vscode.ExtensionContext;
 let stateManager: StateManager;
 let output: OutputManager;
 let statusBar: StatusBarManager;
@@ -55,6 +56,8 @@ let pendingChanges: PendingChange[] = [];
 let lastVbeChecksum = "";
 
 export function activate(context: vscode.ExtensionContext): void {
+  extensionContext = context;
+
   // 平台检查：仅支持 Windows
   if (process.platform !== "win32") {
     vscode.window.showWarningMessage("当前插件第一版仅支持 Windows + Microsoft Excel 桌面版。");
@@ -167,6 +170,9 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
     startFileWatcher();
     startVbeToLocalWatcher();
     output.info("已自动开启自动同步和自动执行 VBA");
+
+    // 恢复连接后写入 MCP 配置
+    await writeMcpConfig();
   }
 
   pushStateToWebview();
@@ -380,6 +386,9 @@ async function handleSelectWorkbook(): Promise<void> {
     startFileWatcher();
     startVbeToLocalWatcher();
     output.info("已自动开启自动同步和自动执行 VBA");
+
+    // 写入 MCP 配置，让 AI 可以直接调用 Excel/VBA 工具
+    await writeMcpConfig();
   }
 }
 
@@ -392,6 +401,11 @@ async function handleSelectSyncDirectory(): Promise<void> {
   });
   if (!uris || uris.length === 0) return;
   await setSyncDirectory(uris[0].fsPath, false);
+
+  // 已设置同步目录且已选择 Excel 文件时，写入 MCP 配置
+  if (stateManager.get("workbookPath")) {
+    await writeMcpConfig();
+  }
 
   // 已选择 Excel 文件时询问是否立即同步
   const workbookPath = stateManager.get("workbookPath");
@@ -415,6 +429,10 @@ async function handleUseCurrentWorkspace(): Promise<void> {
   }
   const wsPath = folders[0].uri.fsPath;
   await setSyncDirectory(wsPath, false);
+
+  if (stateManager.get("workbookPath")) {
+    await writeMcpConfig();
+  }
 }
 
 async function handleUseExcelSameDirectory(): Promise<void> {
@@ -428,6 +446,10 @@ async function handleUseExcelSameDirectory(): Promise<void> {
   try {
     await mkdir(defaultDir, { recursive: true });
     await setSyncDirectory(defaultDir, true);
+
+    if (stateManager.get("workbookPath")) {
+      await writeMcpConfig();
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     output.error(`设置 Excel 相同目录失败：${msg}`);
@@ -449,6 +471,9 @@ async function handleDisconnectExcel(): Promise<void> {
   stopExcelCloseWatcher();
   stopFileWatcher();
   stopVbeToLocalWatcher();
+
+  // 清理 MCP 配置
+  await removeMcpConfig();
 
   // 第二步：立即清空所有持久化和运行期状态，确保即使 F5 中断也不会残留
   await stateManager.set("workbookPath", "");
@@ -1054,6 +1079,10 @@ async function handleExcelClosed(): Promise<void> {
     pushStateToWebview();
     return;
   }
+
+  // Excel 关闭且目录清理成功后，移除 MCP 配置
+  await removeMcpConfig();
+
   await stateManager.set("workbookPath", "");
   await stateManager.set("syncDirectory", "");
   await stateManager.set("syncDirectoryAutoCreated", false);
@@ -1335,4 +1364,106 @@ async function restoreExcelWindowState(): Promise<void> {
   } else {
     output.warn(`取消 Excel 置顶失败：${result.message}`);
   }
+}
+
+// ============================================================
+// MCP 配置自动写入
+// ============================================================
+
+async function writeMcpConfig(): Promise<void> {
+  if (!extensionContext) return;
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) return;
+
+  const workbookPath = stateManager.get("workbookPath");
+  const syncDir = stateManager.get("syncDirectory");
+  if (!workbookPath) return;
+
+  const syncDirNorm = syncDir ? syncDir.replace(/\\/g, "/") : "";
+  const targetWsFolder = syncDir
+    ? workspaceFolders.find((wf) => {
+        const normalizedSyncDir = syncDir.replace(/\\/g, "/").toLowerCase();
+        const wsPath = wf.uri.fsPath.replace(/\\/g, "/").toLowerCase();
+        return normalizedSyncDir === wsPath || normalizedSyncDir.startsWith(wsPath + "/");
+      })
+    : workspaceFolders[0];
+  if (!targetWsFolder) return;
+
+  const serverJsPath = path.join(extensionContext.extensionPath, "dist", "mcp-server.js");
+  const envVars: Record<string, string> = {
+    VBE_FILE_PATH: workbookPath.replace(/\\/g, "/"),
+  };
+  if (syncDirNorm) envVars.VBE_LOCAL_DIR = syncDirNorm;
+
+  const config = {
+    command: "node",
+    args: [serverJsPath.replace(/\\/g, "/")],
+    env: envVars,
+  };
+
+  const wsRoot = targetWsFolder.uri;
+  try {
+    const dirUri = vscode.Uri.joinPath(wsRoot, ".trae");
+    try { await vscode.workspace.fs.createDirectory(dirUri); } catch { /* exists */ }
+    const mcpJsonUri = vscode.Uri.joinPath(dirUri, "mcp.json");
+    await upsertMcpServerConfig(mcpJsonUri, MCP_SERVER_NAME, config);
+    output.info(`已写入 MCP 配置：${mcpJsonUri.fsPath}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`写入 MCP 配置失败：${msg}`);
+  }
+}
+
+async function removeMcpConfig(): Promise<void> {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) return;
+
+  const syncDir = stateManager.get("syncDirectory");
+  if (!syncDir) {
+    for (const wf of workspaceFolders) {
+      try {
+        await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
+      } catch { /* ignore */ }
+    }
+    return;
+  }
+
+  const normalizedSyncDir = syncDir.replace(/\\/g, "/").toLowerCase();
+  const targetWsFolder = workspaceFolders.find((wf) => {
+    const wsPath = wf.uri.fsPath.replace(/\\/g, "/").toLowerCase();
+    return normalizedSyncDir === wsPath || normalizedSyncDir.startsWith(wsPath + "/");
+  });
+  if (targetWsFolder) {
+    try {
+      await removeMcpServerConfig(vscode.Uri.joinPath(targetWsFolder.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
+    } catch { /* ignore */ }
+  }
+}
+
+async function upsertMcpServerConfig(uri: vscode.Uri, name: string, config: unknown): Promise<void> {
+  let json: { mcpServers?: Record<string, unknown> } = {};
+  try {
+    const data = await vscode.workspace.fs.readFile(uri);
+    json = JSON.parse(Buffer.from(data).toString("utf-8"));
+  } catch {
+    json = {};
+  }
+  json.mcpServers = json.mcpServers || {};
+  json.mcpServers[name] = config;
+  const content = JSON.stringify(json, null, 2);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
+}
+
+async function removeMcpServerConfig(uri: vscode.Uri, name: string): Promise<void> {
+  let json: { mcpServers?: Record<string, unknown> } = {};
+  try {
+    const data = await vscode.workspace.fs.readFile(uri);
+    json = JSON.parse(Buffer.from(data).toString("utf-8"));
+  } catch {
+    return;
+  }
+  if (!json.mcpServers) return;
+  delete json.mcpServers[name];
+  const content = JSON.stringify(json, null, 2);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
 }

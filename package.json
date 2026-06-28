@@ -6,6 +6,24 @@
   "publisher": "excel-vba-assistant",
   "license": "MIT",
   "icon": "resources/plugin-icon.png",
+  "homepage": "https://github.com/martin94zh/excel-vba-assistant",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/martin94zh/excel-vba-assistant.git"
+  },
+  "bugs": {
+    "url": "https://github.com/martin94zh/excel-vba-assistant/issues"
+  },
+  "keywords": [
+    "excel",
+    "vba",
+    "mcp",
+    "macro",
+    "trae",
+    "vscode",
+    "vbe",
+    "sync"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
