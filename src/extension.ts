@@ -1019,25 +1019,25 @@ function startExcelCloseWatcher(): void {
       output.info(`Excel 进程 ${expectedPid} 首次可用，启动宽限期 ${EXCEL_STARTUP_GRACE_PERIOD_MS}ms`);
     }
 
-    // 检查该 PID 下是否仍有 Excel 主窗口（可见或最小化均视为存在）
-    const hasWindow = await hasExcelMainWindow(expectedPid);
+    // 检查该 PID 下是否仍有任意窗口句柄（不限制类名/可见性，避免最小化误判）
+    const hasWindow = await hasAnyProcessWindow(expectedPid);
     if (hasWindow !== lastExcelWindowVisible) {
       lastExcelWindowVisible = hasWindow;
-      output.info(`Excel 进程 ${expectedPid} 主窗口变化：${hasWindow ? "PRESENT" : "ABSENT"}`);
+      output.info(`Excel 进程 ${expectedPid} 窗口存在性变化：${hasWindow ? "PRESENT" : "ABSENT"}`);
     }
 
     if (!hasWindow) {
       const inGracePeriod = (Date.now() - excelFirstSeenAliveAt) < EXCEL_STARTUP_GRACE_PERIOD_MS;
       if (inGracePeriod) {
-        output.info(`Excel 进程 ${expectedPid} 主窗口尚未创建，处于启动宽限期，暂不清理`);
+        output.info(`Excel 进程 ${expectedPid} 窗口尚未创建，处于启动宽限期，暂不清理`);
         return;
       }
       excelUnavailableCount++;
       output.warn(
-        `Excel 进程 ${expectedPid} 仍在运行，但已无主窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
+        `Excel 进程 ${expectedPid} 仍在运行，但已无窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
       );
       if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {
-        output.info("Excel 主窗口已关闭且进程无可见窗口，执行关闭清理");
+        output.info("Excel 已无窗口且进程残留，执行关闭清理");
         await handleExcelClosed();
         excelUnavailableCount = 0;
       }
@@ -1046,7 +1046,7 @@ function startExcelCloseWatcher(): void {
     }
 
     if (excelUnavailableCount > 0) {
-      output.info("Excel 主窗口恢复，取消关闭计数");
+      output.info("Excel 窗口恢复，取消关闭计数");
     }
     excelUnavailableCount = 0;
     lastExcelAvailable = true;
@@ -1078,15 +1078,14 @@ try {
   }
 }
 
-/** 检查指定 PID 的 Excel 进程是否仍有主窗口句柄（不判断可见/最小化，避免误判） */
-async function hasExcelMainWindow(pid: number): Promise<boolean> {
+/** 检查指定 PID 的进程是否仍存在任意窗口句柄（不限制类名/可见性，避免最小化误判） */
+async function hasAnyProcessWindow(pid: number): Promise<boolean> {
   try {
     const result = await runPowerShell(`
 Add-Type @"
 using System;
-using System.Text;
 using System.Runtime.InteropServices;
-public static class JrWindowChecker {
+public static class JrAnyWindowChecker {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")]
   public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -1094,24 +1093,16 @@ public static class JrWindowChecker {
   public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
 }
 "@
 $targetPid = ${pid}
 $found = $false
-# 仅 XLMAIN/EXCEL 类为 Excel 主窗口；bosa_sdm_ 为对话框，不应视为 Excel 仍在使用
-$excelClassPattern = [regex]::new('^(XLMAIN|EXCEL)$', 'IgnoreCase')
-[JrWindowChecker]::EnumWindows({
+[JrAnyWindowChecker]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrWindowChecker]::IsWindow($hWnd)) { return $true }
+  if (-not [JrAnyWindowChecker]::IsWindow($hWnd)) { return $true }
   $winPid = [uint32]0
-  [void][JrWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
-  if ($winPid -ne $targetPid) { return $true }
-  $sb = New-Object System.Text.StringBuilder 256
-  [void][JrWindowChecker]::GetClassName($hWnd, $sb, $sb.Capacity)
-  $className = $sb.ToString()
-  if ($excelClassPattern.IsMatch($className)) {
+  [void][JrAnyWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  if ($winPid -eq $targetPid) {
     $found = $true
     return $false
   }
