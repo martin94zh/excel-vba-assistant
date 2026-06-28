@@ -1,7 +1,7 @@
 /**
  * Excel VBA Assistant - MCP 工具定义与分发
  *
- * 对齐任务文档第二十节，定义 14 个 excel_* 工具：
+ * 对齐任务文档第二十节，定义 21 个 excel_* 工具：
  *   excel_list_workbooks / excel_open_workbook
  *   excel_list_resources / excel_get_vba_code
  *   excel_update_vba_code / excel_create_vba_component / excel_delete_vba_component
@@ -18,8 +18,10 @@ import {
   clearRangeSchema,
   clickDialogSchema,
   createSheetSchema,
+  createTableSchema,
   createVbaComponentSchema,
   deleteSheetSchema,
+  deleteTableSchema,
   deleteVbaComponentSchema,
   fillDialogSchema,
   getAllVbaCodeSchema,
@@ -29,18 +31,22 @@ import {
   listMacrosSchema,
   listResourcesSchema,
   listSheetsSchema,
+  listTablesSchema,
   listWorkbooksSchema,
   openWorkbookSchema,
   readRangeSchema,
+  readTableSchema,
   readUsedRangeSchema,
   renameSheetSchema,
   runMacroSchema,
   setCellFormatSchema,
   setCellValueSchema,
   setRangeValuesSchema,
+  setSheetTabFormatSchema,
   syncLocalToVbeSchema,
   syncVbeToLocalSchema,
   updateVbaCodeSchema,
+  writeTableSchema,
 } from "./schemas";
 import { ExcelVbaServiceClient } from "./client/ExcelVbaServiceClient";
 
@@ -176,6 +182,36 @@ export function buildToolDefinitions(): Tool[] {
       name: "excel_set_cell_format",
       description: "【危险操作】设置指定单元格或区域的格式（字体、颜色、对齐、数字格式等）。sheetName 省略时使用第一个工作表，workbookId 可选。若 VBE_READ_ONLY=true 则被拒绝。",
       inputSchema: setCellFormatSchema,
+    },
+    {
+      name: "excel_list_tables",
+      description: "列出指定工作表中的所有超级表（Excel Table / ListObject），含表名、区域、数据体区域、行列数、样式。sheetName 省略时使用第一个工作表，workbookId 可选。",
+      inputSchema: listTablesSchema,
+    },
+    {
+      name: "excel_read_table",
+      description: "读取指定超级表的表头和数据行。sheetName 省略时使用第一个工作表，workbookId 可选。",
+      inputSchema: readTableSchema,
+    },
+    {
+      name: "excel_write_table",
+      description: "【危险操作】向指定超级表写入数据（覆盖数据主体，保留表头）。支持自动调整表大小。sheetName 省略时使用第一个工作表，workbookId 可选。若 VBE_READ_ONLY=true 则被拒绝。",
+      inputSchema: writeTableSchema,
+    },
+    {
+      name: "excel_create_table",
+      description: "【危险操作】在指定工作表中将一个区域转换为超级表。address 需包含表头，如 A1:D10。sheetName 省略时使用第一个工作表，workbookId 可选。若 VBE_READ_ONLY=true 则被拒绝。",
+      inputSchema: createTableSchema,
+    },
+    {
+      name: "excel_delete_table",
+      description: "【危险操作】删除指定超级表；clearDataOnly=true 时仅清空数据。sheetName 省略时使用第一个工作表，workbookId 可选。若 VBE_READ_ONLY=true 则被拒绝。",
+      inputSchema: deleteTableSchema,
+    },
+    {
+      name: "excel_set_sheet_tab_format",
+      description: "【危险操作】设置工作表页签格式：页签颜色（color）和可见性（Visible/Hidden/VeryHidden）。sheetName 必填，workbookId 可选。若 VBE_READ_ONLY=true 则被拒绝。",
+      inputSchema: setSheetTabFormatSchema,
     },
   ];
 }
@@ -383,6 +419,56 @@ export async function dispatchToolCall(
           String(a.address),
           a.format as Record<string, unknown>
         );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_list_tables": {
+        const r = await ctx.client.listTables(wbId(a.workbookId), sheetName(a.sheetName));
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_read_table": {
+        const r = await ctx.client.readTable(
+          wbId(a.workbookId),
+          sheetName(a.sheetName),
+          String(a.tableName),
+          typeof a.includeHeaders === "boolean" ? a.includeHeaders : undefined
+        );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_write_table": {
+        const r = await ctx.client.writeTable(
+          wbId(a.workbookId),
+          sheetName(a.sheetName),
+          String(a.tableName),
+          a.data as unknown[][],
+          typeof a.autoResize === "boolean" ? a.autoResize : undefined
+        );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_create_table": {
+        const r = await ctx.client.createTable(
+          wbId(a.workbookId),
+          sheetName(a.sheetName),
+          String(a.tableName),
+          String(a.address),
+          typeof a.hasHeaders === "boolean" ? a.hasHeaders : undefined,
+          a.styleName ? String(a.styleName) : undefined
+        );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_delete_table": {
+        const r = await ctx.client.deleteTable(
+          wbId(a.workbookId),
+          sheetName(a.sheetName),
+          String(a.tableName),
+          typeof a.clearDataOnly === "boolean" ? a.clearDataOnly : undefined
+        );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_set_sheet_tab_format": {
+        const r = await ctx.client.setSheetTabFormat(wbId(a.workbookId), String(a.sheetName), {
+          color: a.color ? String(a.color) : undefined,
+          visible: a.visible as "Visible" | "Hidden" | "VeryHidden" | undefined,
+        });
         return { content: json(r), isError: !r.success };
       }
       default:

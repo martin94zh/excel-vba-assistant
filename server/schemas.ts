@@ -329,6 +329,82 @@ export const setCellFormatSchema = {
   required: ["address", "format"],
 };
 
+/** excel_list_tables */
+export const listTablesSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: SHEET_NAME_DESC },
+  },
+};
+
+/** excel_read_table */
+export const readTableSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: SHEET_NAME_DESC },
+    tableName: { type: STR, description: "超级表名称" },
+    includeHeaders: { type: BOOL, description: "是否包含表头，默认 true" },
+  },
+  required: ["tableName"],
+};
+
+/** excel_write_table */
+export const writeTableSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: SHEET_NAME_DESC },
+    tableName: { type: STR, description: "超级表名称" },
+    data: {
+      type: ARR,
+      description: "二维数组数据，不包含表头",
+      items: { type: ARR, items: {} },
+    },
+    autoResize: { type: BOOL, description: "是否自动调整表大小以匹配数据，默认 true" },
+  },
+  required: ["tableName", "data"],
+};
+
+/** excel_create_table */
+export const createTableSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: SHEET_NAME_DESC },
+    tableName: { type: STR, description: "超级表名称" },
+    address: { type: STR, description: "表区域，如 A1:D10（包含表头）" },
+    hasHeaders: { type: BOOL, description: "首行是否为表头，默认 true" },
+    styleName: { type: STR, description: "可选。表样式名称，如 TableStyleMedium2" },
+  },
+  required: ["tableName", "address"],
+};
+
+/** excel_delete_table */
+export const deleteTableSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: SHEET_NAME_DESC },
+    tableName: { type: STR, description: "超级表名称" },
+    clearDataOnly: { type: BOOL, description: "仅清空数据而不删除表结构，默认 false" },
+  },
+  required: ["tableName"],
+};
+
+/** excel_set_sheet_tab_format */
+export const setSheetTabFormatSchema = {
+  type: OBJ,
+  properties: {
+    workbookId: { type: STR, description: WORKBOOK_ID_DESC },
+    sheetName: { type: STR, description: "目标工作表名" },
+    color: { type: STR, description: "页签颜色，如 #FF0000" },
+    visible: { type: STR, enum: ["Visible", "Hidden", "VeryHidden"], description: "可见性：Visible 可见 / Hidden 隐藏（可通过取消隐藏恢复）/ VeryHidden 深度隐藏（需 VBA 恢复）" },
+  },
+  required: ["sheetName"],
+};
+
 export type ToolSchemaMap = {
   excel_list_workbooks: typeof listWorkbooksSchema;
   excel_open_workbook: typeof openWorkbookSchema;
@@ -356,4 +432,10 @@ export type ToolSchemaMap = {
   excel_set_range_values: typeof setRangeValuesSchema;
   excel_clear_range: typeof clearRangeSchema;
   excel_set_cell_format: typeof setCellFormatSchema;
+  excel_list_tables: typeof listTablesSchema;
+  excel_read_table: typeof readTableSchema;
+  excel_write_table: typeof writeTableSchema;
+  excel_create_table: typeof createTableSchema;
+  excel_delete_table: typeof deleteTableSchema;
+  excel_set_sheet_tab_format: typeof setSheetTabFormatSchema;
 };

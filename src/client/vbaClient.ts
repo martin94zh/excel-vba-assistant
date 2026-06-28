@@ -1342,6 +1342,261 @@ try {
     return runPowerShell(script);
   }
 
+  /** 列出工作表中的超级表（Excel Table / ListObject） */
+  async listTables(sheetName: string | undefined): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
+    $tables = @()
+    foreach ($tbl in $ws.ListObjects) {
+        $tables += [pscustomobject]@{
+            name = [string]$tbl.Name
+            range = [string]$tbl.Range.Address($false, $false)
+            headerRowRange = [string]$tbl.HeaderRowRange.Address($false, $false)
+            dataBodyRange = if ($tbl.DataBodyRange) { [string]$tbl.DataBodyRange.Address($false, $false) } else { $null }
+            rowCount = if ($tbl.DataBodyRange) { [int]$tbl.DataBodyRange.Rows.Count } else { 0 }
+            columnCount = [int]$tbl.ListColumns.Count
+            style = [string]$tbl.TableStyle.Name
+        }
+    }
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; tables = $tables; count = $tables.Count }
+    Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$sheetLit/g, sheetLit);
+    return runPowerShell(script);
+  }
+
+  /** 读取超级表数据 */
+  async readTable(sheetName: string | undefined, tableName: string, includeHeaders = true): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
+    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
+    $headers = @()
+    foreach ($col in $tbl.ListColumns) { $headers += [string]$col.Name }
+    $rows = @()
+    if ($tbl.DataBodyRange) {
+        $data = $tbl.DataBodyRange.Value2
+        if ($data -is [array]) {
+            $rowCount = $tbl.DataBodyRange.Rows.Count
+            $colCount = $tbl.DataBodyRange.Columns.Count
+            for ($r = 1; $r -le $rowCount; $r++) {
+                $row = @()
+                for ($c = 1; $c -le $colCount; $c++) {
+                    $v = $data[$r, $c]
+                    if ($v -eq $null) { $v = $null } else { $v = [string]$v }
+                    $row += $v
+                }
+                $rows += ,$row
+            }
+        } else {
+            $rows += ,@([string]$data)
+        }
+    }
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; headers = $headers; rows = $rows; rowCount = $rows.Count }
+    if (-not $includeHeaders) { $payload.headers = $null }
+    Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$sheetLit/g, sheetLit).replace(/\$includeHeaders/g, includeHeaders ? "$true" : "$false");
+    return runPowerShell(script);
+  }
+
+  /** 写入超级表数据（覆盖数据主体，不含表头） */
+  async writeTable(
+    sheetName: string | undefined,
+    tableName: string,
+    data: unknown[][],
+    autoResize = true
+  ): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const rows = data.length;
+    const cols = rows > 0 ? data[0].length : 0;
+    if (rows === 0 || cols === 0) {
+      return { success: false, message: "data 不能为空数组" };
+    }
+    const jsonValues = JSON.stringify(data);
+    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
+    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
+    $values = ConvertFrom-Json '${escapePowerShellSingleQuoted(jsonValues)}'
+    $arr = New-Object 'object[,]' ${rows}, ${cols}
+    for ($r = 0; $r -lt ${rows}; $r++) {
+        for ($c = 0; $c -lt ${cols}; $c++) {
+            $v = $values[$r][$c]
+            if ($v -eq $null) { $v = "" }
+            $arr[$r, $c] = $v
+        }
+    }
+    if ($tbl.DataBodyRange) { $tbl.DataBodyRange.Delete() }
+    $startCell = $tbl.HeaderRowRange.Cells.Item(1, 1).Offset(1, 0)
+    $endCell = $ws.Cells.Item($startCell.Row + ${rows - 1}, $startCell.Column + ${cols - 1})
+    $rng = $ws.Range($startCell, $endCell)
+    $rng.Value2 = $arr
+    if ($autoResize) {
+        $tbl.Resize($rng)
+        $headerCount = $tbl.ListColumns.Count
+        if ($headerCount -gt ${cols}) {
+            for ($i = $headerCount; $i -gt ${cols}; $i--) { $tbl.ListColumns[$i].Delete() }
+        } elseif ($headerCount -lt ${cols}) {
+            for ($i = $headerCount + 1; $i -le ${cols}; $i++) { [void]$tbl.ListColumns.Add() }
+        }
+    }
+    $wb.Save()
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; rowCount = ${rows}; columnCount = ${cols} }
+    Write-Output (ConvertTo-Json $payload -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$sheetLit/g, sheetLit).replace(/\$autoResize/g, autoResize ? "$true" : "$false");
+    return runPowerShell(script);
+  }
+
+  /** 创建超级表 */
+  async createTable(
+    sheetName: string | undefined,
+    tableName: string,
+    address: string,
+    hasHeaders = true,
+    styleName?: string
+  ): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
+    const styleLit = styleName ? `'${escapePowerShellSingleQuoted(styleName)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
+    $rng = $ws.Range('${escapePowerShellSingleQuoted(address)}')
+    $tbl = $ws.ListObjects.Add([Microsoft.Office.Interop.Excel.XlListObjectSourceType]::xlSrcRange, $rng, $null, [Microsoft.Office.Interop.Excel.XlYesNoGuess]::${hasHeaders ? "xlYes" : "xlNo"})
+    $tbl.Name = '${escapePowerShellSingleQuoted(tableName)}'
+    if ($styleLit -ne "$null") { $tbl.TableStyle = $wb.TableStyles.Item($styleLit) }
+    $wb.Save()
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; range = [string]$tbl.Range.Address($false, $false) }
+    Write-Output (ConvertTo-Json $payload -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$sheetLit/g, sheetLit).replace(/\$styleLit/g, styleLit);
+    return runPowerShell(script);
+  }
+
+  /** 删除超级表 */
+  async deleteTable(sheetName: string | undefined, tableName: string, clearDataOnly = false): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
+    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
+    if ($clearDataOnly) {
+        if ($tbl.DataBodyRange) { $tbl.DataBodyRange.ClearContents() }
+    } else {
+        $tbl.Unlink()
+        $tbl.Delete()
+    }
+    $wb.Save()
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; clearDataOnly = $clearDataOnly }
+    Write-Output (ConvertTo-Json $payload -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$sheetLit/g, sheetLit).replace(/\$clearDataOnly/g, clearDataOnly ? "$true" : "$false");
+    return runPowerShell(script);
+  }
+
+  /** 设置工作表页签格式（颜色、可见性） */
+  async setSheetTabFormat(
+    sheetName: string,
+    options: { color?: string; visible?: "Visible" | "Hidden" | "VeryHidden" }
+  ): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName);
+    if (preCheck) return preCheck;
+    const colorLit = options.color ? `'${escapePowerShellSingleQuoted(options.color)}'` : "$null";
+    const visibleLit = options.visible ? `'${escapePowerShellSingleQuoted(options.visible)}'` : "$null";
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    Add-Type -AssemblyName System.Drawing
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
+    $ws = $wb.Sheets.Item('${escapePowerShellSingleQuoted(sheetName)}')
+    if ($colorLit -ne "$null") { $ws.Tab.Color = [System.Drawing.ColorTranslator]::FromHtml($colorLit) }
+    if ($visibleLit -ne "$null") { $ws.Visible = [Microsoft.Office.Interop.Excel.XlSheetVisibility]::xlSheet$visibleLit }
+    $wb.Save()
+    $actualSheet = [string]$ws.Name
+    $payload = @{ success = $true; sheetName = $actualSheet; color = '${escapePowerShellSingleQuoted(options.color || "")}'; visible = '${escapePowerShellSingleQuoted(options.visible || "")}' }
+    Write-Output (ConvertTo-Json $payload -Compress)
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
+`.replace(/\$colorLit/g, colorLit).replace(/\$visibleLit/g, visibleLit);
+    return runPowerShell(script);
+  }
+
   /** 设置 Excel 主窗口置顶或取消置顶（通过 COM 获取当前工作簿实例的 HWND 后调用 Win32 API） */
   async setWindowTopMost(onTop: boolean): Promise<ExcelComResult> {
     const action = onTop ? "置顶" : "取消置顶";

@@ -4,7 +4,7 @@ Excel VBA 本地同步器 + AI 编程桥接器：在 Trae / VS Code 中管理、
 
 通过 PowerShell 调用 Excel COM Automation 操作已打开的工作簿，实现 VBAProject 的读写、双向同步、宏执行、单元格操作与弹窗处理，并内置 MCP Server 让 AI 直接调用 Excel/VBA 工具。
 
-> 当前版本：**v0.6.8**
+> 当前版本：**v0.7.0**
 
 ---
 
@@ -70,7 +70,7 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 ### 方式 A：从 .vsix 安装
 
-1. 下载 `excel-vba-assistant-0.6.8.vsix`
+1. 下载 `excel-vba-assistant-0.7.0.vsix`
 2. 在 Trae / VS Code 中执行 `Extensions: Install from VSIX...`
 3. 选择该文件安装
 
@@ -290,7 +290,7 @@ MCP Server 已打包为 `dist/mcp-server.exe`，内置 Node.js 运行时。用�
 
 ### 为什么之前版本需要 Node.js？
 
-早期版本使用 `node dist/mcp-server.js` 启动 MCP Server，因此依赖用户本机 Node.js。v0.6.8 起改用 `pkg` 打包为独立可执行文件，不再依赖外部 Node.js。
+早期版本使用 `node dist/mcp-server.js` 启动 MCP Server，因此依赖用户本机 Node.js。v0.7.0 起改用 `pkg` 打包为独立可执行文件，不再依赖外部 Node.js。
 
 ### 安装插件后 MCP 就可用吗？
 
@@ -405,6 +405,12 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 | `excel_set_range_values` | **危险** | 批量写入区域 |
 | `excel_clear_range` | **危险** | 清空区域内容 |
 | `excel_set_cell_format` | **危险** | 设置单元格格式 |
+| `excel_list_tables` | 只读 | 列出工作表中的超级表 |
+| `excel_read_table` | 只读 | 读取超级表数据 |
+| `excel_write_table` | **危险** | 覆盖写入超级表数据 |
+| `excel_create_table` | **危险** | 将区域转换为超级表 |
+| `excel_delete_table` | **危险** | 删除超级表或清空数据 |
+| `excel_set_sheet_tab_format` | **危险** | 设置工作表页签颜色和可见性 |
 
 ### AI 指引（Skills）
 
@@ -452,9 +458,10 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 2. **删除组件**（`excel_delete_vba_component`）
 3. **运行宏**（`excel_run_macro`、自动执行 VBA）
 4. **本地 → VBE 覆盖同步**（`excel_sync_local_to_vbe`）
-5. **工作表操作**（`excel_create_sheet` / `excel_delete_sheet` / `excel_rename_sheet`）
+5. **工作表操作**（`excel_create_sheet` / `excel_delete_sheet` / `excel_rename_sheet` / `excel_set_sheet_tab_format`）
 6. **单元格写入/格式**（`excel_set_cell_value` / `excel_set_range_values` / `excel_clear_range` / `excel_set_cell_format`）
-7. **弹窗操作**（`excel_click_dialog` / `excel_fill_dialog`）
+7. **超级表操作**（`excel_write_table` / `excel_create_table` / `excel_delete_table`）
+8. **弹窗操作**（`excel_click_dialog` / `excel_fill_dialog`）
 
 ### 保护机制
 
@@ -484,7 +491,7 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ```powershell
 npm run package
-# 生成 excel-vba-assistant-0.6.8.vsix
+# 生成 excel-vba-assistant-0.7.0.vsix
 ```
 
 ### 查看日志

@@ -510,4 +510,91 @@ try {
     if (pre) return pre;
     return entry.client.setCellFormat(sheetName, address, format as import("../../src/client/vbaClient").CellFormat);
   }
+
+  /** excel_list_tables */
+  async listTables(workbookId: string | undefined, sheetName: string | undefined): Promise<ExcelComResult> {
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.listTables(sheetName);
+  }
+
+  /** excel_read_table */
+  async readTable(
+    workbookId: string | undefined,
+    sheetName: string | undefined,
+    tableName: string,
+    includeHeaders?: boolean
+  ): Promise<ExcelComResult> {
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.readTable(sheetName, tableName, includeHeaders);
+  }
+
+  /** excel_write_table */
+  async writeTable(
+    workbookId: string | undefined,
+    sheetName: string | undefined,
+    tableName: string,
+    data: unknown[][],
+    autoResize?: boolean
+  ): Promise<ExcelComResult> {
+    if (this.readOnly) {
+      return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止写入超级表。" };
+    }
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.writeTable(sheetName, tableName, data, autoResize);
+  }
+
+  /** excel_create_table */
+  async createTable(
+    workbookId: string | undefined,
+    sheetName: string | undefined,
+    tableName: string,
+    address: string,
+    hasHeaders?: boolean,
+    styleName?: string
+  ): Promise<ExcelComResult> {
+    if (this.readOnly) {
+      return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止创建超级表。" };
+    }
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.createTable(sheetName, tableName, address, hasHeaders, styleName);
+  }
+
+  /** excel_delete_table */
+  async deleteTable(
+    workbookId: string | undefined,
+    sheetName: string | undefined,
+    tableName: string,
+    clearDataOnly?: boolean
+  ): Promise<ExcelComResult> {
+    if (this.readOnly) {
+      return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止删除超级表。" };
+    }
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.deleteTable(sheetName, tableName, clearDataOnly);
+  }
+
+  /** excel_set_sheet_tab_format */
+  async setSheetTabFormat(
+    workbookId: string | undefined,
+    sheetName: string,
+    options: { color?: string; visible?: "Visible" | "Hidden" | "VeryHidden" }
+  ): Promise<ExcelComResult> {
+    if (this.readOnly) {
+      return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止修改工作表页签格式。" };
+    }
+    const entry = this.getEntry(workbookId);
+    const pre = await this.preCheck(entry);
+    if (pre) return pre;
+    return entry.client.setSheetTabFormat(sheetName, options);
+  }
 }
