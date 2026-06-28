@@ -26,7 +26,8 @@ export interface MacroDialogInfo {
   buttons: string[];
   width?: number;
   height?: number;
-  kind?: "vb_runtime_error" | "error" | "confirmation" | "info" | "unknown";
+  hasInputField?: boolean;
+  kind?: "input" | "vb_runtime_error" | "error" | "confirmation" | "info" | "unknown";
   autoHandled?: boolean;
   autoAction?: string;
 }
@@ -61,6 +62,10 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 
 function classifyMacroDialog(dialog: MacroDialogInfo): MacroDialogInfo["kind"] {
+  // InputBox（有可编辑文本输入框）优先识别，避免被误判为 confirmation 而自动取消
+  if (dialog.hasInputField) {
+    return "input";
+  }
   const haystack = `${dialog.title}\n${dialog.text}\n${dialog.buttons.join(" ")}`.toLowerCase();
   if (
     haystack.includes("microsoft visual basic")
@@ -112,6 +117,10 @@ function buildDialogFingerprint(dialog: Pick<MacroDialogInfo, "processName" | "t
 function pickDialogAction(dialog: MacroDialogInfo): { buttons: string[]; actionLabel: string; terminal: boolean } | null {
   const kind = dialog.kind || classifyMacroDialog(dialog);
   switch (kind) {
+    case "input":
+      // InputBox 需要用户输入，不自动点击取消，避免宏直接 Exit Sub
+      // 由 autoFillInputs 参数或外部 excel_fill_dialog/excel_click_dialog 处理
+      return null;
     case "vb_runtime_error":
       return { buttons: ["结束", "End", "确定", "OK"], actionLabel: "结束", terminal: true };
     case "error":
@@ -342,18 +351,21 @@ $results = New-Object System.Collections.Generic.List[object]
   if ($processName -notmatch '${SUPPORTED_DIALOG_PROCESS_PATTERN}') { return $true }
   $buttons = New-Object System.Collections.Generic.List[string]
   $textParts = New-Object System.Collections.Generic.List[string]
+  $hasInputField = $false
   [JrVbeWin32]::EnumChildWindows($hWnd, {
     param($childHwnd, $childLparam)
     if (-not [JrVbeWin32]::IsWindowVisible($childHwnd)) { return $true }
-    $childText = Get-WindowTextSafe $childHwnd
-    if ([string]::IsNullOrWhiteSpace($childText)) { return $true }
     $childClass = Get-ClassNameSafe $childHwnd
+    $childText = Get-WindowTextSafe $childHwnd
     if ($childClass -eq "Button") {
-      if (-not $buttons.Contains($childText)) { $buttons.Add($childText) | Out-Null }
+      if (-not [string]::IsNullOrWhiteSpace($childText) -and -not $buttons.Contains($childText)) { $buttons.Add($childText) | Out-Null }
       return $true
     }
-    if ($childClass -in @("Static", "Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W")) {
-      if (-not $textParts.Contains($childText)) { $textParts.Add($childText) | Out-Null }
+    if ($childClass -in @("Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W")) {
+      $script:hasInputField = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($childText) -and -not $textParts.Contains($childText)) {
+      $textParts.Add($childText) | Out-Null
     }
     return $true
   }, [IntPtr]::Zero) | Out-Null
@@ -383,6 +395,7 @@ $results = New-Object System.Collections.Generic.List[object]
     buttons = @($buttons | Select-Object -Unique)
     width = $width
     height = $height
+    hasInputField = $hasInputField
   }) | Out-Null
   return $true
 }, [IntPtr]::Zero) | Out-Null
@@ -713,10 +726,83 @@ Write-Output (@{ success = $true; editText = $actual } | ConvertTo-Json -Compres
   }
 }
 
+/**
+ * 向 InputBox 的编辑框写入文本并点击确定。
+ * 用于宏执行期间自动填充 InputBox 弹窗。
+ */
+async function fillInputBoxAndSubmit(handle: string, text: string): Promise<boolean> {
+  const script = `
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+
+public static class JrInputBoxFill {
+  public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool EnumChildWindows(IntPtr hWnd, EnumChildProc callback, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetClassName(IntPtr hWnd, StringBuilder text, int maxCount);
+  [DllImport("user32.dll")]
+  public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+}
+"@
+$target = [IntPtr]::new([long]'${escapePowerShellSingleQuoted(handle)}')
+$editHandle = [IntPtr]::Zero
+$okHandle = [IntPtr]::Zero
+[JrInputBoxFill]::EnumChildWindows($target, {
+  param($child, $lp)
+  if (-not [JrInputBoxFill]::IsWindowVisible($child)) { return $true }
+  $sb = New-Object System.Text.StringBuilder 256
+  [void][JrInputBoxFill]::GetClassName($child, $sb, 256)
+  $class = $sb.ToString()
+  if ($class -in @("Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W")) {
+    $script:editHandle = $child
+  }
+  $sb2 = New-Object System.Text.StringBuilder 256
+  [void][JrInputBoxFill]::GetWindowText($child, $sb2, 256)
+  $btnText = $sb2.ToString()
+  if ($class -eq "Button" -and ($btnText -eq "确定" -or $btnText -eq "OK")) {
+    $script:okHandle = $child
+  }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+if ($editHandle -eq [IntPtr]::Zero) { Write-Output "false"; exit 0 }
+# WM_SETTEXT = 0x000C
+[void][JrInputBoxFill]::SendMessage($editHandle, 0x000C, [IntPtr]::Zero, '${escapePowerShellSingleQuoted(text)}')
+Start-Sleep -Milliseconds 200
+# 点击确定按钮
+if ($okHandle -ne [IntPtr]::Zero) {
+  # BM_CLICK = 0x00F5
+  [void][JrInputBoxFill]::SendMessage($okHandle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+} else {
+  # 回退：按回车键
+  [void][JrInputBoxFill]::SetForegroundWindow($target)
+  $wshell = New-Object -ComObject WScript.Shell
+  [void]$wshell.AppActivate("InputBox")
+  $wshell.SendKeys("{ENTER}")
+}
+Start-Sleep -Milliseconds 300
+Write-Output "true"
+`;
+  const result = await runPowerShell(script, 8000);
+  return result.success && result.output?.trim() === "true";
+}
+
 export async function runMacroWithDialogHandling(
   filePath: string,
   macroName: string,
-  options: { timeoutMs?: number; captureResultRange?: string } = {}
+  options: { timeoutMs?: number; captureResultRange?: string; autoFillInputs?: string[] } = {}
 ): Promise<ExcelComResult> {
   const normalizedMacroName = macroName.trim();
   if (!normalizedMacroName) {
@@ -785,7 +871,24 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
         }
 
         const action = pickDialogAction(dialog);
-        if (!action) continue;
+        if (!action) {
+          // InputBox 弹窗：如果提供了 autoFillInputs，自动填充并提交
+          if (dialog.kind === "input" && options.autoFillInputs && options.autoFillInputs.length > 0) {
+            const inputText = options.autoFillInputs.shift()!;
+            const filled = await fillInputBoxAndSubmit(dialog.handle, inputText);
+            if (filled) {
+              dialog.autoHandled = true;
+              dialog.autoAction = `fill:${inputText}`;
+              const dialogIndex = collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
+              if (dialogIndex >= 0) {
+                collectedDialogs[dialogIndex] = { ...collectedDialogs[dialogIndex], autoHandled: true, autoAction: `fill:${inputText}` };
+              }
+              existing.handled = true;
+              await sleep(500);
+            }
+          }
+          continue;
+        }
         const handled = await invokeExcelDialogButton(dialog.handle, action.buttons);
         if (!handled) continue;
 

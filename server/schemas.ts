@@ -142,6 +142,11 @@ export const runMacroSchema = {
       type: STR,
       description: "可选。宏执行后读取哪个单元格/区域的 Text 作为结果返回，例如 A1 或 Sheet1!B2。",
     },
+    autoFillInputs: {
+      type: ARR,
+      description: "可选。宏执行期间遇到 InputBox 弹窗时，按顺序自动填充的文本列表。每个 InputBox 消耗一个文本值并自动点击确定。未提供时 InputBox 不会被自动处理，宏将等待用户手动输入或超时。",
+      items: { type: STR },
+    },
   },
   required: ["macroName"],
 };

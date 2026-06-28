@@ -311,7 +311,8 @@ export async function dispatchToolCall(
           String(a.macroName),
           Array.isArray(a.args) ? a.args : undefined,
           typeof a.timeoutSeconds === "number" ? a.timeoutSeconds : undefined,
-          typeof a.captureResultRange === "string" ? a.captureResultRange : undefined
+          typeof a.captureResultRange === "string" ? a.captureResultRange : undefined,
+          Array.isArray(a.autoFillInputs) ? a.autoFillInputs.map(String) : undefined
         );
         return { content: json(r), isError: !r.success };
       }

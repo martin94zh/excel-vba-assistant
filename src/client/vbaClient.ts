@@ -981,11 +981,12 @@ try {
   /** 运行无参数宏 */
   async runMacro(
     macroName: string,
-    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean } = {}
+    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean; autoFillInputs?: string[] } = {}
   ): Promise<ExcelComResult> {
     return runMacroWithDialogHandling(this.filePath, macroName, {
       timeoutMs: options.timeoutMs,
       captureResultRange: options.captureResultRange,
+      autoFillInputs: options.autoFillInputs,
     });
   }
 

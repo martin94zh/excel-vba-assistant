@@ -317,7 +317,8 @@ try {
     macroName: string,
     args?: unknown[],
     timeoutSeconds?: number,
-    captureResultRange?: string
+    captureResultRange?: string,
+    autoFillInputs?: string[]
   ): Promise<ExcelComResult> {
     if (this.readOnly) {
       return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止运行宏。" };
@@ -332,6 +333,7 @@ try {
     return entry.client.runMacro(macroName, {
       timeoutMs: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       captureResultRange,
+      autoFillInputs,
     });
   }
 
