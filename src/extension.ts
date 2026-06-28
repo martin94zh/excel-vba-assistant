@@ -1009,7 +1009,7 @@ try {
     foreach ($w in $excel.Workbooks) {
         if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break }
     }
-    Write-Output ($found ? "RUNNING" : "CLOSED")
+    if ($found) { Write-Output "RUNNING" } else { Write-Output "CLOSED" }
 } catch {
     Write-Output "CLOSED"
 }
