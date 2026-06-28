@@ -1,0 +1,8 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VBA Standard Module Icon">
+<title>VBA Standard Module Icon</title>
+
+<rect x="20" y="16" width="88" height="96" rx="18" fill="#2563EB" fill-opacity="0.10"/>
+<path d="M40 20H78L102 44V92C102 100.837 94.8366 108 86 108H40C31.1634 108 24 100.837 24 92V36C24 27.1634 31.1634 20 40 20Z" stroke="#2563EB" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M78 22V42C78 45.3137 80.6863 48 84 48H101" stroke="#2563EB" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M48 62L38 72L48 82M80 62L90 72L80 82M60 88L69 56" stroke="#2563EB" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

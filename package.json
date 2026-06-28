@@ -1,0 +1,146 @@
+{
+  "name": "excel-vba-assistant",
+  "displayName": "Excel VBA Assistant",
+  "description": "Excel VBA 本地同步器 + AI 编程桥接器：在 Trae/VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目",
+  "version": "0.1.0",
+  "publisher": "excel-vba-assistant",
+  "license": "MIT",
+  "icon": "resources/plugin-icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "excel-vba-panel",
+          "title": "Excel VBA",
+          "icon": "resources/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "excel-vba-panel": [
+        {
+          "type": "webview",
+          "id": "excelVbaControlPanel",
+          "name": "Excel VBA",
+          "icon": "resources/sidebar-icon.svg"
+        }
+      ]
+    },
+    "iconThemes": [
+      {
+        "id": "excelVbaIcons",
+        "label": "Excel VBA Icons",
+        "path": "./resources/file-icon-theme.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "excelVba.openSettingsPanel",
+        "title": "Excel VBA: 打开控制面板"
+      },
+      {
+        "command": "excelVba.selectWorkbook",
+        "title": "Excel VBA: 选择 Excel 文件"
+      },
+      {
+        "command": "excelVba.selectSyncDirectory",
+        "title": "Excel VBA: 选择本地同步目录"
+      },
+      {
+        "command": "excelVba.useCurrentWorkspace",
+        "title": "Excel VBA: 使用当前工作区作为同步目录"
+      },
+      {
+        "command": "excelVba.syncVbeToLocal",
+        "title": "Excel VBA: VBE → 本地 同步"
+      },
+      {
+        "command": "excelVba.syncLocalToVbe",
+        "title": "Excel VBA: 本地 → VBE 同步"
+      },
+      {
+        "command": "excelVba.toggleAutoSync",
+        "title": "Excel VBA: 切换自动同步"
+      },
+      {
+        "command": "excelVba.toggleAutoRunVba",
+        "title": "Excel VBA: 切换自动执行 VBA"
+      },
+      {
+        "command": "excelVba.runMacro",
+        "title": "Excel VBA: 运行宏"
+      },
+      {
+        "command": "excelVba.openOutput",
+        "title": "Excel VBA: 打开输出日志"
+      },
+      {
+        "command": "excelVba.refreshResources",
+        "title": "Excel VBA: 刷新资源"
+      }
+    ],
+    "configuration": {
+      "title": "Excel VBA Assistant",
+      "properties": {
+        "excelVba.autoRunVba": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启后，AI 修改或新增代码后将自动执行（仍需用户确认）"
+        },
+        "excelVba.autoRunMacroName": {
+          "type": "string",
+          "default": "",
+          "description": "自动执行的宏名称，例如 Module1.Main"
+        },
+        "excelVba.autoSync": {
+          "type": "boolean",
+          "default": false,
+          "description": "开启后，本地模块/类模块/窗体/Excel 对象事件代码变动自动同步到 VBE"
+        },
+        "excelVba.localServiceUrl": {
+          "type": "string",
+          "default": "",
+          "description": "预留：本地 HTTP 服务地址（当前版本直接使用 PowerShell COM，无需填写）"
+        }
+      }
+    },
+    "colors": [
+      {
+        "id": "excelVba.statusBarSyncedBackground",
+        "description": "Excel VBA Assistant 同步成功时状态栏背景色",
+        "defaults": {
+          "dark": "#238636",
+          "light": "#1a7f37",
+          "highContrast": "#238636"
+        }
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
+    "compile:server": "esbuild ./server/index.ts --bundle --outfile=dist/mcp-server.js --format=cjs --platform=node --target=node18 --minify",
+    "build": "npm run compile && npm run compile:server",
+    "package": "npm run build && vsce package --allow-missing-repository",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

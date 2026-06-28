@@ -1,0 +1,38 @@
+{
+  "iconDefinitions": {
+    "_vba_module": {
+      "iconPath": "./vba-module.svg"
+    },
+    "_vba_class": {
+      "iconPath": "./vba-class.svg"
+    },
+    "_vba_form": {
+      "iconPath": "./vba-form.svg"
+    },
+    "_vba_worksheet": {
+      "iconPath": "./vba-worksheet.svg"
+    },
+    "_vba_workbook": {
+      "iconPath": "./vba-workbook.svg"
+    }
+  },
+  "fileExtensions": {
+    "bas": "_vba_module",
+    "cls": "_vba_class",
+    "frm": "_vba_form",
+    "wks": "_vba_worksheet",
+    "wbk": "_vba_workbook"
+  },
+  "folderNames": {
+    "模块": "_vba_module",
+    "类模块": "_vba_class",
+    "窗体": "_vba_form",
+    "Microsoft Excel 对象": "_vba_worksheet"
+  },
+  "folderNamesExpanded": {
+    "模块": "_vba_module",
+    "类模块": "_vba_class",
+    "窗体": "_vba_form",
+    "Microsoft Excel 对象": "_vba_worksheet"
+  }
+}

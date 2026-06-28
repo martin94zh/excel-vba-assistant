@@ -1,0 +1,13 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="plugin-excel-vba">
+<title>plugin-excel-vba</title>
+
+<rect x="18" y="18" width="92" height="92" rx="16" fill="#D7DEE8" fill-opacity="0.08"/>
+<path d="M34 20H94C100.627 20 106 25.373 106 32V96C106 102.627 100.627 108 94 108H34C27.373 108 22 102.627 22 96V32C22 25.373 27.373 20 34 20Z" stroke="#D7DEE8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M64 20V108" stroke="#D7DEE8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="14" y="50" width="42" height="42" rx="8" fill="#D7DEE8" fill-opacity="0.18" stroke="#D7DEE8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M25 61L45 81M45 61L25 81" stroke="#D7DEE8" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M74 42H94M74 58H92" stroke="#D7DEE8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M72 76L84 88L104 66" stroke="#D7DEE8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M74 72H78" stroke="#D7DEE8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+</svg>

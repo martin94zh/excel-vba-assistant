@@ -1,0 +1,7 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VBA Workbook Icon">
+<title>VBA Workbook Icon</title>
+<rect x="22" y="18" width="72" height="92" rx="12" fill="#107C41" fill-opacity="0.10"/>
+<path d="M28 28C28 23.5817 31.5817 20 36 20H68L88 40V100C88 104.418 84.4183 108 80 108H36C31.5817 108 28 104.418 28 100V28Z" stroke="#107C41" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M66 20V40H88" stroke="#107C41" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M42 64H74M42 82H74M42 46H58" stroke="#107C41" stroke-width="5" stroke-opacity="0.85" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
