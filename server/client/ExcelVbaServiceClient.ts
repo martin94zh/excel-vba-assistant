@@ -14,6 +14,7 @@
 import { basename, resolve } from "path";
 
 import { VbaClient } from "../../src/client/vbaClient";
+import { listExcelDialogs, clickExcelDialog, fillDialogInput } from "../../src/client/vbaMacroRunner";
 import { runPowerShell, escapePowerShellSingleQuoted, type ExcelComResult } from "../../src/runtime/powershell";
 
 /** 工作簿注册条目 */
@@ -334,29 +335,25 @@ try {
     });
   }
 
-  /** excel_list_dialogs */
+  /** excel_list_dialogs（不依赖特定工作簿） */
   async listDialogs(): Promise<ExcelComResult> {
-    // 弹窗检测不针对特定工作簿，使用默认客户端即可
-    const entry = this.getDefaultEntry();
-    return entry.client.listDialogs();
+    return listExcelDialogs();
   }
 
-  /** excel_click_dialog（危险操作） */
+  /** excel_click_dialog（危险操作，不依赖特定工作簿） */
   async clickDialog(handle: string, action?: string, buttonText?: string): Promise<ExcelComResult> {
     if (this.readOnly) {
       return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止点击弹窗。" };
     }
-    const entry = this.getDefaultEntry();
-    return entry.client.clickDialog(handle, action, buttonText);
+    return clickExcelDialog(handle, action, buttonText);
   }
 
-  /** excel_fill_dialog（危险操作） */
+  /** excel_fill_dialog（危险操作，不依赖特定工作簿） */
   async fillDialog(handle: string, text: string, submit = false): Promise<ExcelComResult> {
     if (this.readOnly) {
       return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止向弹窗输入文本。" };
     }
-    const entry = this.getDefaultEntry();
-    return entry.client.fillDialog(handle, text, submit);
+    return fillDialogInput(handle, text, submit);
   }
 
   /** excel_list_sheets */

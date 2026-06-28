@@ -929,7 +929,7 @@ function stopFileWatcher(): void {
 // Excel 关闭检测（需求 3）
 // ============================================================
 
-const EXCEL_CHECK_INTERVAL_MS = 2000;
+const EXCEL_CHECK_INTERVAL_MS = 5000;
 
 function startExcelCloseWatcher(): void {
   stopExcelCloseWatcher();
@@ -951,9 +951,23 @@ function startExcelCloseWatcher(): void {
         await handleExcelClosed();
         return;
       }
-      // 进程还在即认为 Excel 仍存活；不调用 GetActiveObject 维持其运行
+      // 进程还在时，进一步检查是否仍有可见窗口；部分场景 Excel 窗口已关闭但进程残留
+      const hasWindow = await hasExcelVisibleWindow(expectedPid);
+      if (!hasWindow) {
+        excelUnavailableCount++;
+        output.warn(
+          `Excel 进程 ${expectedPid} 仍在运行，但已无可视窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
+        );
+        if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {
+          output.info("Excel 窗口已关闭且进程无可见窗口，执行关闭清理");
+          await handleExcelClosed();
+          excelUnavailableCount = 0;
+        }
+        lastExcelAvailable = false;
+        return;
+      }
       if (excelUnavailableCount > 0) {
-        output.info("Excel 进程恢复存活，取消关闭计数");
+        output.info("Excel 恢复可见，取消关闭计数");
       }
       excelUnavailableCount = 0;
       lastExcelAvailable = true;
@@ -1009,9 +1023,54 @@ try {
     Write-Output "DEAD"
 }
 `);
-    const alive = result.success && (result.output || "").trim() === "ALIVE";
-    output.info(`Excel 进程 ${pid} 存活检测：${alive ? "ALIVE" : "DEAD"} (success=${result.success})`);
-    return alive;
+    return result.success && (result.output || "").trim() === "ALIVE";
+  } catch {
+    return false;
+  }
+}
+
+/** 检查指定 PID 的 Excel 进程是否仍有可见窗口 */
+async function hasExcelVisibleWindow(pid: number): Promise<boolean> {
+  try {
+    const result = await runPowerShell(`
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class JrWindowChecker {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+}
+"@
+$targetPid = ${pid}
+$found = $false
+$excelClassPattern = [regex]::new('^(XLMAIN|EXCEL|bosa_sdm_)', 'IgnoreCase')
+[JrWindowChecker]::EnumWindows({
+  param($hWnd, $lParam)
+  if (-not [JrWindowChecker]::IsWindowVisible($hWnd)) { return $true }
+  $winPid = [uint32]0
+  [void][JrWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  if ($winPid -ne $targetPid) { return $true }
+  $sb = New-Object System.Text.StringBuilder 256
+  [void][JrWindowChecker]::GetClassName($hWnd, $sb, $sb.Capacity)
+  $className = $sb.ToString()
+  if ($excelClassPattern.IsMatch($className)) {
+    $found = $true
+    return $false
+  }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+if ($found) { Write-Output "VISIBLE" } else { Write-Output "HIDDEN" }
+`);
+    return result.success && (result.output || "").trim() === "VISIBLE";
   } catch {
     return false;
   }

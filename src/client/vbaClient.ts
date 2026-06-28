@@ -1379,14 +1379,12 @@ try {
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
     $SWP_NOMOVE = 0x0002
     $SWP_NOSIZE = 0x0001
-    $SWP_SHOWWINDOW = 0x0040
 
-    # 先激活窗口，确保置顶命令生效
-    [void][Win32TopMost]::ShowWindowAsync($hwnd, 1) # SW_SHOWNORMAL
+    # 激活窗口确保置顶命令生效，但不改变窗口的显示状态（最大化/最小化保持原样）
     [void][Win32TopMost]::SetForegroundWindow($hwnd)
 
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $flags = $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW
+    $flags = $SWP_NOMOVE -bor $SWP_NOSIZE
     $result = [Win32TopMost]::SetWindowPos($hwnd, $target, 0, 0, 0, 0, $flags)
     if (-not $result) {
         $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
