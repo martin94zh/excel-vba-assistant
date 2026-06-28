@@ -38,6 +38,7 @@ import {
   readTableSchema,
   readUsedRangeSchema,
   renameSheetSchema,
+  resumeMacroSchema,
   runMacroSchema,
   setCellFormatSchema,
   setCellValueSchema,
@@ -105,8 +106,13 @@ export function buildToolDefinitions(): Tool[] {
     },
     {
       name: "excel_run_macro",
-      description: "【危险操作】在已打开的 Excel 中运行一个 VBA 宏。建议传完整限定名（VBAProject.模块名.过程名 或 Sheet1.过程名）。运行期间会自动检测并点击常见弹窗（如运行时错误、确认框）。当前版本仅支持无参数宏。若 VBE_READ_ONLY=true 则被拒绝。",
+      description: "【危险操作】在已打开的 Excel 中运行一个 VBA 宏。建议传完整限定名（VBAProject.模块名.过程名 或 Sheet1.过程名）。默认交互模式（interactive=true）：检测到运行时错误/InputBox/确认框等弹窗时暂停并返回弹窗信息，由 AI 调用 excel_click_dialog/excel_fill_dialog 处理后再调用 excel_resume_macro 恢复。设 interactive=false 则自动处理弹窗。当前版本仅支持无参数宏。若 VBE_READ_ONLY=true 则被拒绝。",
       inputSchema: runMacroSchema,
+    },
+    {
+      name: "excel_resume_macro",
+      description: "恢复因检测到弹窗而暂停的宏执行。传入 excel_run_macro 返回的 sessionId，继续等待宏完成或检测到新弹窗。AI 处理完弹窗后调用此工具。",
+      inputSchema: resumeMacroSchema,
     },
     {
       name: "excel_list_dialogs",
@@ -312,7 +318,15 @@ export async function dispatchToolCall(
           Array.isArray(a.args) ? a.args : undefined,
           typeof a.timeoutSeconds === "number" ? a.timeoutSeconds : undefined,
           typeof a.captureResultRange === "string" ? a.captureResultRange : undefined,
-          Array.isArray(a.autoFillInputs) ? a.autoFillInputs.map(String) : undefined
+          Array.isArray(a.autoFillInputs) ? a.autoFillInputs.map(String) : undefined,
+          typeof a.interactive === "boolean" ? a.interactive : undefined
+        );
+        return { content: json(r), isError: !r.success };
+      }
+      case "excel_resume_macro": {
+        const r = await ctx.client.resumeMacro(
+          String(a.sessionId),
+          typeof a.extendTimeoutSeconds === "number" ? a.extendTimeoutSeconds : undefined
         );
         return { content: json(r), isError: !r.success };
       }

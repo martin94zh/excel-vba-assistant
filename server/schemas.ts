@@ -147,8 +147,28 @@ export const runMacroSchema = {
       description: "可选。宏执行期间遇到 InputBox 弹窗时，按顺序自动填充的文本列表。每个 InputBox 消耗一个文本值并自动点击确定。未提供时 InputBox 不会被自动处理，宏将等待用户手动输入或超时。",
       items: { type: STR },
     },
+    interactive: {
+      type: "boolean",
+      description: "可选。默认 true。交互式弹窗处理模式：检测到非信息类弹窗（运行时错误/InputBox/确认框等）时暂停宏并返回弹窗信息，由 AI 调用 excel_click_dialog/excel_fill_dialog 处理后，再调用 excel_resume_macro 恢复。设为 false 则自动处理弹窗（运行时错误自动点结束、错误自动点确定等）。",
+    },
   },
   required: ["macroName"],
+};
+
+/** excel_resume_macro（恢复暂停的宏） */
+export const resumeMacroSchema = {
+  type: OBJ,
+  properties: {
+    sessionId: {
+      type: STR,
+      description: "excel_run_macro 返回的会话 ID（details.sessionId）",
+    },
+    extendTimeoutSeconds: {
+      type: NUM,
+      description: "可选。延长宏执行超时秒数。不传则沿用原超时。",
+    },
+  },
+  required: ["sessionId"],
 };
 
 /** excel_list_dialogs */
@@ -422,6 +442,7 @@ export type ToolSchemaMap = {
   excel_delete_vba_component: typeof deleteVbaComponentSchema;
   excel_list_macros: typeof listMacrosSchema;
   excel_run_macro: typeof runMacroSchema;
+  excel_resume_macro: typeof resumeMacroSchema;
   excel_list_dialogs: typeof listDialogsSchema;
   excel_click_dialog: typeof clickDialogSchema;
   excel_fill_dialog: typeof fillDialogSchema;

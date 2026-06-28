@@ -318,7 +318,8 @@ try {
     args?: unknown[],
     timeoutSeconds?: number,
     captureResultRange?: string,
-    autoFillInputs?: string[]
+    autoFillInputs?: string[],
+    interactive?: boolean
   ): Promise<ExcelComResult> {
     if (this.readOnly) {
       return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止运行宏。" };
@@ -334,7 +335,18 @@ try {
       timeoutMs: timeoutSeconds ? timeoutSeconds * 1000 : undefined,
       captureResultRange,
       autoFillInputs,
+      interactive,
     });
+  }
+
+  /** excel_resume_macro（恢复暂停的宏） */
+  async resumeMacro(sessionId: string, extendTimeoutSeconds?: number): Promise<ExcelComResult> {
+    if (this.readOnly) {
+      return { success: false, message: "只读模式已启用（VBE_READ_ONLY=true），禁止运行宏。" };
+    }
+    // resumeMacro 是全局 session，不依赖特定工作簿
+    const { resumeMacroRun } = await import("../../src/client/vbaMacroRunner");
+    return resumeMacroRun(sessionId, { extendTimeoutMs: extendTimeoutSeconds ? extendTimeoutSeconds * 1000 : undefined });
   }
 
   /** excel_list_dialogs（不依赖特定工作簿） */

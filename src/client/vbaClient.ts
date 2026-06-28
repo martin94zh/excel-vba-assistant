@@ -23,7 +23,7 @@ import {
   sleep,
   type ExcelComResult,
 } from "../runtime/powershell";
-import { runMacroWithDialogHandling, listExcelDialogs, clickExcelDialog, fillDialogInput } from "./vbaMacroRunner";
+import { runMacroWithDialogHandling, resumeMacroRun, listExcelDialogs, clickExcelDialog, fillDialogInput } from "./vbaMacroRunner";
 
 /** 单元格格式 */
 export interface CellFormat {
@@ -981,13 +981,19 @@ try {
   /** 运行无参数宏 */
   async runMacro(
     macroName: string,
-    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean; autoFillInputs?: string[] } = {}
+    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean; autoFillInputs?: string[]; interactive?: boolean } = {}
   ): Promise<ExcelComResult> {
     return runMacroWithDialogHandling(this.filePath, macroName, {
       timeoutMs: options.timeoutMs,
       captureResultRange: options.captureResultRange,
       autoFillInputs: options.autoFillInputs,
+      interactive: options.interactive,
     });
+  }
+
+  /** 恢复暂停的宏执行 */
+  async resumeMacro(sessionId: string, extendTimeoutMs?: number): Promise<ExcelComResult> {
+    return resumeMacroRun(sessionId, { extendTimeoutMs });
   }
 
   /** 列出当前 Excel/VBA 弹窗 */

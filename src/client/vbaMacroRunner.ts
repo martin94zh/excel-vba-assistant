@@ -799,10 +799,217 @@ Write-Output "true"
   return result.success && result.output?.trim() === "true";
 }
 
+// ============================================================
+// 宏运行 Session 管理（支持交互式弹窗处理）
+// ============================================================
+
+interface MacroSession {
+  sessionId: string;
+  child: import("child_process").ChildProcess;
+  statusPath: string;
+  runnerPath: string;
+  startedAt: number;
+  deadline: number;
+  createdAt: number;
+  macroName: string;
+  workbookName: string;
+  collectedDialogs: MacroDialogInfo[];
+  dialogState: Map<string, { fingerprint: string; firstSeen: number; handled: boolean; recorded: boolean }>;
+  recordedFingerprints: Set<string>;
+  lastDialogInspectionError?: string;
+  captureResultRange?: string;
+  autoFillInputs?: string[];
+}
+
+const macroSessions = new Map<string, MacroSession>();
+const MACRO_SESSION_TTL_MS = 30 * 60 * 1000;
+
+function cleanupSession(session: MacroSession): void {
+  if (session.child.exitCode === null) {
+    session.child.kill();
+  }
+  unlink(session.runnerPath).catch(() => {});
+  unlink(session.statusPath).catch(() => {});
+}
+
+function cleanupExpiredSessions(): void {
+  const now = Date.now();
+  for (const [id, session] of macroSessions) {
+    if (now - session.createdAt > MACRO_SESSION_TTL_MS) {
+      cleanupSession(session);
+      macroSessions.delete(id);
+    }
+  }
+}
+
+/** 判断结果是否为"暂停等待弹窗处理"（session 已保存） */
+function isSessionPausedResult(result: ExcelComResult): boolean {
+  return !!result.details && typeof result.details === "object" && "sessionId" in result.details;
+}
+
+/**
+ * 核心轮询循环：检测宏状态和弹窗。
+ * interactive=true 时，检测到非 info 弹窗会返回弹窗信息并保存 session（不终止子进程）。
+ * interactive=false 时，自动处理所有弹窗（保持原行为）。
+ */
+async function pollMacroLoop(session: MacroSession, interactive: boolean): Promise<ExcelComResult> {
+  while (Date.now() < session.deadline) {
+    const status = await readJsonFile<MacroRunnerStatus>(session.statusPath);
+    if (status) {
+      return buildMacroRunResult(status, session.macroName, session.workbookName, session.startedAt, session.collectedDialogs, session.lastDialogInspectionError, session.captureResultRange);
+    }
+
+    const inspection = await inspectExcelDialogs();
+    if (inspection.error) {
+      session.lastDialogInspectionError = inspection.error;
+    }
+    for (const rawDialog of inspection.dialogs) {
+      const dialog: MacroDialogInfo = { ...rawDialog, kind: classifyMacroDialog(rawDialog) };
+      const key = dialog.handle;
+      const fingerprint = buildDialogFingerprint(dialog);
+      const existing = session.dialogState.get(key);
+      if (!existing || existing.fingerprint !== fingerprint) {
+        session.dialogState.set(key, { fingerprint, firstSeen: Date.now(), handled: false, recorded: false });
+        continue;
+      }
+      if (existing.handled || Date.now() - existing.firstSeen < MACRO_DIALOG_STABLE_MS) {
+        continue;
+      }
+      if (!existing.recorded) {
+        if (!session.recordedFingerprints.has(fingerprint)) {
+          session.collectedDialogs.push({ ...dialog });
+          session.recordedFingerprints.add(fingerprint);
+        }
+        existing.recorded = true;
+      }
+
+      const action = pickDialogAction(dialog);
+
+      // InputBox 弹窗（action 为 null）
+      if (!action) {
+        if (dialog.kind === "input" && session.autoFillInputs && session.autoFillInputs.length > 0) {
+          const inputText = session.autoFillInputs.shift()!;
+          const filled = await fillInputBoxAndSubmit(dialog.handle, inputText);
+          if (filled) {
+            dialog.autoHandled = true;
+            dialog.autoAction = `fill:${inputText}`;
+            const dialogIndex = session.collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
+            if (dialogIndex >= 0) {
+              session.collectedDialogs[dialogIndex] = { ...session.collectedDialogs[dialogIndex], autoHandled: true, autoAction: `fill:${inputText}` };
+            }
+            existing.handled = true;
+            await sleep(500);
+          }
+          continue;
+        }
+        // 无 autoFillInputs：interactive 模式返回弹窗信息让 AI 处理
+        if (interactive) {
+          macroSessions.set(session.sessionId, session);
+          return {
+            success: false,
+            message: `宏执行期间检测到 InputBox 弹窗，宏已暂停。请调用 excel_fill_dialog 填充文本或 excel_click_dialog 点击按钮，然后调用 excel_resume_macro 恢复执行。`,
+            details: {
+              sessionId: session.sessionId,
+              macroName: session.macroName,
+              workbook: session.workbookName,
+              dialogs: session.collectedDialogs,
+              pendingDialog: enrichDialogInfo(dialog),
+            },
+          };
+        }
+        continue;
+      }
+
+      // 非 input 类型：info 自动处理，其他类型 interactive 模式返回让 AI 判断
+      if (interactive && dialog.kind !== "info") {
+        macroSessions.set(session.sessionId, session);
+        return {
+          success: false,
+          message: `宏执行期间检测到弹窗：${summarizeDialog(dialog)}。请根据弹窗内容调用 excel_click_dialog 处理（如点击 结束/调试/确定/取消 等），然后调用 excel_resume_macro 恢复执行。`,
+          details: {
+            sessionId: session.sessionId,
+            macroName: session.macroName,
+            workbook: session.workbookName,
+            dialogs: session.collectedDialogs,
+            pendingDialog: enrichDialogInfo(dialog),
+          },
+        };
+      }
+
+      // 自动处理（info 类型或非 interactive 模式）
+      const handled = await invokeExcelDialogButton(dialog.handle, action.buttons);
+      if (!handled) continue;
+
+      dialog.autoHandled = true;
+      dialog.autoAction = action.actionLabel;
+      const dialogIndex = session.collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
+      if (dialogIndex >= 0) {
+        session.collectedDialogs[dialogIndex] = { ...session.collectedDialogs[dialogIndex], autoHandled: true, autoAction: action.actionLabel };
+      } else {
+        session.collectedDialogs.push(dialog);
+        session.recordedFingerprints.add(fingerprint);
+      }
+      existing.handled = true;
+
+      if (action.terminal) {
+        await sleep(900);
+      }
+    }
+
+    if (session.child.exitCode !== null) {
+      break;
+    }
+    await sleep(MACRO_DIALOG_POLL_MS);
+  }
+
+  // 子进程结束
+  if (session.child.exitCode !== null) {
+    const finalStatus = await waitForRunnerStatus(session.statusPath, MACRO_RUNNER_STATUS_GRACE_MS);
+    if (finalStatus) {
+      return buildMacroRunResult(finalStatus, session.macroName, session.workbookName, session.startedAt, session.collectedDialogs, session.lastDialogInspectionError, session.captureResultRange);
+    }
+    const finishedDetails = {
+      macroName: session.macroName,
+      workbook: session.workbookName,
+      durationMs: Date.now() - session.startedAt,
+      dialogs: session.collectedDialogs,
+      dialogInspectionError: session.lastDialogInspectionError,
+      exitCode: session.child.exitCode,
+      statusMissing: true,
+    };
+    if (session.child.exitCode === 0) {
+      const autoHandledCount = session.collectedDialogs.filter((dialog) => dialog.autoHandled).length;
+      return {
+        success: true,
+        message: autoHandledCount > 0
+          ? `宏 ${session.macroName} 执行完成（已自动处理 ${autoHandledCount} 个弹窗）`
+          : `宏 ${session.macroName} 执行完成`,
+        details: finishedDetails,
+      };
+    }
+    return { success: false, message: `宏执行进程已结束，但未返回可解析的状态（exit code: ${session.child.exitCode}）。`, details: finishedDetails };
+  }
+
+  // 超时
+  const timeoutDetails = {
+    macroName: session.macroName,
+    workbook: session.workbookName,
+    durationMs: Date.now() - session.startedAt,
+    dialogs: session.collectedDialogs,
+    dialogInspectionError: session.lastDialogInspectionError,
+  };
+  const timeoutMessage = session.lastDialogInspectionError
+    ? `宏执行期间弹窗探测失败：${session.lastDialogInspectionError}`
+    : session.collectedDialogs.length > 0
+      ? `宏执行超时，期间检测到并处理了弹窗。最后一个弹窗：${summarizeDialog(session.collectedDialogs[session.collectedDialogs.length - 1])}`
+      : "宏执行超时，Excel 可能仍在运行宏或弹出了未能自动处理的对话框。";
+  return { success: false, message: timeoutMessage, details: timeoutDetails };
+}
+
 export async function runMacroWithDialogHandling(
   filePath: string,
   macroName: string,
-  options: { timeoutMs?: number; captureResultRange?: string; autoFillInputs?: string[] } = {}
+  options: { timeoutMs?: number; captureResultRange?: string; autoFillInputs?: string[]; interactive?: boolean } = {}
 ): Promise<ExcelComResult> {
   const normalizedMacroName = macroName.trim();
   if (!normalizedMacroName) {
@@ -813,9 +1020,13 @@ export async function runMacroWithDialogHandling(
   const preCheck = await ensureExcelRunning(wbName);
   if (preCheck) return preCheck;
 
+  cleanupExpiredSessions();
+
+  const interactive = options.interactive ?? true;
   const timeoutMs = options.timeoutMs ?? 45000;
-  const statusPath = join(tmpdir(), `vba_macro_status_${randomBytes(8).toString("hex")}.json`);
-  const runnerPath = join(tmpdir(), `vba_macro_runner_${randomBytes(8).toString("hex")}.ps1`);
+  const sessionId = randomBytes(8).toString("hex");
+  const statusPath = join(tmpdir(), `vba_macro_status_${sessionId}.json`);
+  const runnerPath = join(tmpdir(), `vba_macro_runner_${sessionId}.ps1`);
   const bom = "\uFEFF";
   const utf8Header = `
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -833,133 +1044,65 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
     stdio: "ignore",
   });
 
-  const collectedDialogs: MacroDialogInfo[] = [];
-  const dialogState = new Map<string, { fingerprint: string; firstSeen: number; handled: boolean; recorded: boolean }>();
-  const recordedFingerprints = new Set<string>();
-  const startedAt = Date.now();
-  let lastDialogInspectionError: string | undefined;
+  const session: MacroSession = {
+    sessionId,
+    child,
+    statusPath,
+    runnerPath,
+    startedAt: Date.now(),
+    deadline: Date.now() + timeoutMs,
+    createdAt: Date.now(),
+    macroName: normalizedMacroName,
+    workbookName: wbName,
+    collectedDialogs: [],
+    dialogState: new Map(),
+    recordedFingerprints: new Set(),
+    captureResultRange: options.captureResultRange,
+    autoFillInputs: options.autoFillInputs ? [...options.autoFillInputs] : undefined,
+  };
 
+  let sessionSaved = false;
   try {
-    while (Date.now() - startedAt < timeoutMs) {
-      const status = await readJsonFile<MacroRunnerStatus>(statusPath);
-      if (status) {
-        return buildMacroRunResult(status, normalizedMacroName, wbName, startedAt, collectedDialogs, lastDialogInspectionError, options.captureResultRange);
-      }
-
-      const inspection = await inspectExcelDialogs();
-      if (inspection.error) {
-        lastDialogInspectionError = inspection.error;
-      }
-      for (const rawDialog of inspection.dialogs) {
-        const dialog: MacroDialogInfo = { ...rawDialog, kind: classifyMacroDialog(rawDialog) };
-        const key = dialog.handle;
-        const fingerprint = buildDialogFingerprint(dialog);
-        const existing = dialogState.get(key);
-        if (!existing || existing.fingerprint !== fingerprint) {
-          dialogState.set(key, { fingerprint, firstSeen: Date.now(), handled: false, recorded: false });
-          continue;
-        }
-        if (existing.handled || Date.now() - existing.firstSeen < MACRO_DIALOG_STABLE_MS) {
-          continue;
-        }
-        if (!existing.recorded) {
-          if (!recordedFingerprints.has(fingerprint)) {
-            collectedDialogs.push({ ...dialog });
-            recordedFingerprints.add(fingerprint);
-          }
-          existing.recorded = true;
-        }
-
-        const action = pickDialogAction(dialog);
-        if (!action) {
-          // InputBox 弹窗：如果提供了 autoFillInputs，自动填充并提交
-          if (dialog.kind === "input" && options.autoFillInputs && options.autoFillInputs.length > 0) {
-            const inputText = options.autoFillInputs.shift()!;
-            const filled = await fillInputBoxAndSubmit(dialog.handle, inputText);
-            if (filled) {
-              dialog.autoHandled = true;
-              dialog.autoAction = `fill:${inputText}`;
-              const dialogIndex = collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
-              if (dialogIndex >= 0) {
-                collectedDialogs[dialogIndex] = { ...collectedDialogs[dialogIndex], autoHandled: true, autoAction: `fill:${inputText}` };
-              }
-              existing.handled = true;
-              await sleep(500);
-            }
-          }
-          continue;
-        }
-        const handled = await invokeExcelDialogButton(dialog.handle, action.buttons);
-        if (!handled) continue;
-
-        dialog.autoHandled = true;
-        dialog.autoAction = action.actionLabel;
-        const dialogIndex = collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
-        if (dialogIndex >= 0) {
-          collectedDialogs[dialogIndex] = { ...collectedDialogs[dialogIndex], autoHandled: true, autoAction: action.actionLabel };
-        } else {
-          collectedDialogs.push(dialog);
-          recordedFingerprints.add(fingerprint);
-        }
-        existing.handled = true;
-
-        if (action.terminal) {
-          await sleep(900);
-        }
-      }
-
-      if (child.exitCode !== null) {
-        break;
-      }
-      await sleep(MACRO_DIALOG_POLL_MS);
-    }
-
-    if (child.exitCode !== null) {
-      const finalStatus = await waitForRunnerStatus(statusPath, MACRO_RUNNER_STATUS_GRACE_MS);
-      if (finalStatus) {
-        return buildMacroRunResult(finalStatus, normalizedMacroName, wbName, startedAt, collectedDialogs, lastDialogInspectionError, options.captureResultRange);
-      }
-      const finishedDetails = {
-        macroName: normalizedMacroName,
-        workbook: wbName,
-        durationMs: Date.now() - startedAt,
-        dialogs: collectedDialogs,
-        dialogInspectionError: lastDialogInspectionError,
-        exitCode: child.exitCode,
-        statusMissing: true,
-      };
-      if (child.exitCode === 0) {
-        const autoHandledCount = collectedDialogs.filter((dialog) => dialog.autoHandled).length;
-        return {
-          success: true,
-          message: autoHandledCount > 0
-            ? `宏 ${normalizedMacroName} 执行完成（已自动处理 ${autoHandledCount} 个弹窗）`
-            : `宏 ${normalizedMacroName} 执行完成`,
-          details: finishedDetails,
-        };
-      }
-      return { success: false, message: `宏执行进程已结束，但未返回可解析的状态（exit code: ${child.exitCode}）。`, details: finishedDetails };
-    }
-
-    const timeoutDetails = {
-      macroName: normalizedMacroName,
-      workbook: wbName,
-      durationMs: Date.now() - startedAt,
-      dialogs: collectedDialogs,
-      dialogInspectionError: lastDialogInspectionError,
-    };
-    const timeoutMessage = lastDialogInspectionError
-      ? `宏执行期间弹窗探测失败：${lastDialogInspectionError}`
-      : collectedDialogs.length > 0
-        ? `宏执行超时，期间检测到并处理了弹窗。最后一个弹窗：${summarizeDialog(collectedDialogs[collectedDialogs.length - 1])}`
-        : "宏执行超时，Excel 可能仍在运行宏或弹出了未能自动处理的对话框。";
-    return { success: false, message: timeoutMessage, details: timeoutDetails };
+    const result = await pollMacroLoop(session, interactive);
+    sessionSaved = isSessionPausedResult(result);
+    return result;
   } finally {
-    if (child.exitCode === null) {
-      child.kill();
+    if (!sessionSaved) {
+      cleanupSession(session);
     }
-    unlink(runnerPath).catch(() => {});
-    unlink(statusPath).catch(() => {});
+  }
+}
+
+/**
+ * 恢复暂停的宏执行。
+ * AI 处理完弹窗后调用此函数，继续等待宏完成或检测到新弹窗。
+ */
+export async function resumeMacroRun(
+  sessionId: string,
+  options: { extendTimeoutMs?: number } = {}
+): Promise<ExcelComResult> {
+  const session = macroSessions.get(sessionId);
+  if (!session) {
+    return { success: false, message: `会话 ${sessionId} 不存在或已过期。请重新调用 excel_run_macro。` };
+  }
+
+  // 从 Map 移除（pollMacroLoop 会在需要时重新保存）
+  macroSessions.delete(sessionId);
+
+  // 可选延长超时
+  if (options.extendTimeoutMs) {
+    session.deadline = Date.now() + options.extendTimeoutMs;
+  }
+
+  let sessionSaved = false;
+  try {
+    const result = await pollMacroLoop(session, true);
+    sessionSaved = isSessionPausedResult(result);
+    return result;
+  } finally {
+    if (!sessionSaved) {
+      cleanupSession(session);
+    }
   }
 }
 
