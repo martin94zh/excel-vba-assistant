@@ -19,7 +19,7 @@ import { OutputManager } from "./output/outputChannel";
 import { StatusBarManager } from "./status/statusBar";
 import { ExcelVbaPanelProvider, type WebviewMessage, type StatePayload } from "./webview";
 import { VbaClient } from "./client/vbaClient";
-import { escapePowerShellSingleQuoted, runPowerShell } from "./runtime/powershell";
+import { escapePowerShellSingleQuoted, isExcelWorkbookOpen, runPowerShell } from "./runtime/powershell";
 
 const SUPPORTED_EXCEL_EXTENSIONS = ["xlsm", "xlsb", "xlam", "xls"];
 const VBA_FILE_EXTENSIONS = [".bas", ".cls", ".frm", ".wks", ".wbk"];
@@ -1022,13 +1022,14 @@ function startExcelCloseWatcher(): void {
       output.info(`Excel 进程 ${expectedPid} 首次可用，启动宽限期 ${EXCEL_STARTUP_GRACE_PERIOD_MS}ms`);
     }
 
-    // 同步期间跳过工作簿检测，避免 PowerShell 调用与同步操作竞争
+    // 同步期间跳过工作簿检测，避免 PowerShell/COM 调用与同步操作竞争（Lessons Learned）
     if (isSyncing || isSyncingVbeToLocal) {
       return;
     }
 
-    // 通过窗口标题检测目标工作簿是否仍打开（零 COM 调用，避免资源竞争和错误实例问题）
-    const workbookOpen = await isWorkbookOpenInProcess(expectedPid, workbookPath);
+    // 使用 COM 检测目标工作簿是否仍被 Excel 打开（传入 PID 避免多实例取错）
+    // COM 直接查询 Workbooks 集合，是最准确的检测方式；同步期间已跳过避免资源竞争
+    const workbookOpen = await isExcelWorkbookOpen(workbookPath, expectedPid);
     if (workbookOpen !== lastExcelWindowVisible) {
       lastExcelWindowVisible = workbookOpen;
       output.info(`Excel 工作簿状态变化：${workbookOpen ? "PRESENT" : "ABSENT"}`);
@@ -1084,84 +1085,6 @@ try {
 }
 `);
     return result.success && (result.output || "").trim() === "ALIVE";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * 通过窗口标题检测指定 PID 的 Excel 进程是否仍打开目标工作簿（零 COM 调用）。
- *
- * Excel 2013+ 使用 SDI（单文档界面），每个打开的工作簿都有独立的顶级窗口，
- * 窗口标题格式为 "FileName.xlsm - Excel"。因此只需枚举目标 PID 的所有窗口，
- * 检查是否有窗口标题包含工作簿名称即可。
- *
- * 相比 COM 检测（isExcelWorkbookOpen）的优势：
- * 1. 无 COM 资源竞争，同步期间也可安全调用
- * 2. 精确匹配 PID，不受 GetActiveObject 返回错误实例的影响
- * 3. 不受 Excel 弹窗/计算/编辑模式导致的 COM 调用失败影响
- * 4. 兼容最小化窗口（IsIconic 检测）
- */
-async function isWorkbookOpenInProcess(pid: number, workbookPath: string): Promise<boolean> {
-  const wbName = path.basename(workbookPath);
-  const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath));
-  try {
-    // 所有 EnumWindows 逻辑在 C# 静态方法中完成，避免 PowerShell ScriptBlock 作用域问题
-    // （Lessons Learned: PowerShell EnumWindows callback has variable scoping issues）
-    const result = await runPowerShell(`
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public static class JrWorkbookWindowChecker {
-  private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-  [DllImport("user32.dll")]
-  private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-  [DllImport("user32.dll")]
-  private static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  private static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  private static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-  [DllImport("user32.dll")]
-  private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-
-  public static bool IsWorkbookOpen(int targetPid, string wbName, string wbNameNoExt) {
-    bool found = false;
-    EnumWindows((hWnd, lParam) => {
-      if (!IsWindow(hWnd)) return true;
-      // 必须是可见窗口或最小化窗口（排除隐藏的辅助窗口）
-      bool visible = IsWindowVisible(hWnd);
-      bool iconic = IsIconic(hWnd);
-      if (!visible && !iconic) return true;
-      // 校验窗口属于目标进程
-      uint winPid;
-      GetWindowThreadProcessId(hWnd, out winPid);
-      if (winPid != (uint)targetPid) return true;
-      // 检查窗口标题是否包含工作簿名称（不区分大小写，兼容已保存/未保存/兼容模式等标题）
-      StringBuilder sb = new StringBuilder(512);
-      GetWindowText(hWnd, sb, 512);
-      string title = sb.ToString();
-      if (title.IndexOf(wbName, StringComparison.OrdinalIgnoreCase) >= 0 ||
-          title.IndexOf(wbNameNoExt, StringComparison.OrdinalIgnoreCase) >= 0) {
-        found = true;
-        return false; // 停止枚举
-      }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
-}
-"@
-$targetPid = ${pid}
-$wbName = '${escapePowerShellSingleQuoted(wbName)}'
-$wbNameNoExt = '${escapePowerShellSingleQuoted(wbNameNoExt)}'
-$result = [JrWorkbookWindowChecker]::IsWorkbookOpen($targetPid, $wbName, $wbNameNoExt)
-if ($result) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
-`, 8000);
-    return result.success && (result.output || "").trim() === "PRESENT";
   } catch {
     return false;
   }
