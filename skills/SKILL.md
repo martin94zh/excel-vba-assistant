@@ -28,13 +28,15 @@ Use the `excel-vba-assistant` MCP server when the task involves **VBA code, VBAP
 - `excel_list_sheets`, `excel_create_sheet`, `excel_delete_sheet`, `excel_rename_sheet`: worksheet management. See `sheet.md`.
 - `excel_read_range`, `excel_read_used_range`: read cell values. See `cell-read.md`.
 - `excel_set_cell_value`, `excel_set_range_values`, `excel_clear_range`, `excel_set_cell_format`: write cells and formatting. See `cell-write.md`.
+- `excel_list_tables`, `excel_read_table`, `excel_write_table`, `excel_create_table`, `excel_delete_table`: Excel Table (ListObject) operations. See `table.md`.
+- `excel_set_sheet_tab_format`: worksheet tab color and visibility. See `tab-format.md`.
 
 ## Important
 
 - **workbookId is optional** for most tools. If omitted, the server uses the default workbook (from `VBE_FILE_PATH` or the most recent `excel_open_workbook`).
 - **sheetName is optional** for cell/sheet tools. If omitted, the first worksheet is used.
 - **Read-only mode**: set `VBE_READ_ONLY=true` to block all dangerous operations. Write/delete/run/sync tools return an error when read-only.
-- **Dangerous operations** include: `excel_update_vba_code`, `excel_create_vba_component`, `excel_delete_vba_component`, `excel_run_macro`, `excel_click_dialog`, `excel_fill_dialog`, `excel_sync_local_to_vbe`, `excel_create_sheet`, `excel_delete_sheet`, `excel_rename_sheet`, all `excel_set_*` and `excel_clear_range`.
+- **Dangerous operations** include: `excel_update_vba_code`, `excel_create_vba_component`, `excel_delete_vba_component`, `excel_run_macro`, `excel_click_dialog`, `excel_fill_dialog`, `excel_sync_local_to_vbe`, `excel_create_sheet`, `excel_delete_sheet`, `excel_rename_sheet`, `excel_create_table`, `excel_delete_table`, `excel_write_table`, `excel_set_sheet_tab_format`, all other `excel_set_*` and `excel_clear_range`.
 - **Trust access**: Excel must have "Trust access to the VBA project object model" enabled, or all VBA read/write operations fail.
 - **Delete synchronization**: `excel_sync_vbe_to_local` removes local files for components deleted in VBE; `excel_sync_local_to_vbe` removes VBE components whose local files are deleted. Worksheet/workbook object modules are never deleted by sync.
 - **Document modules**: never try to create or delete worksheet/workbook object modules (`Sheet1`, `ThisWorkbook`). Only update their code via `excel_update_vba_code` or sync.
