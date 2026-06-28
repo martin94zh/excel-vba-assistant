@@ -163,6 +163,9 @@ function resolveDialogAction(
     case "end":
     case "结束":
       return { buttons: ["结束", "End"], actionLabel: "结束", terminal: true };
+    case "debug":
+    case "调试":
+      return { buttons: ["调试", "Debug"], actionLabel: "调试", terminal: false };
     case "close":
     case "关闭":
       return { buttons: ["关闭", "Close"], actionLabel: "关闭", terminal: true };
@@ -920,23 +923,33 @@ async function pollMacroLoop(session: MacroSession, interactive: boolean): Promi
         continue;
       }
 
-      // 非 input 类型：info 自动处理，其他类型 interactive 模式返回让 AI 判断
-      if (interactive && dialog.kind !== "info") {
+      // 非 input 类型：interactive 模式下所有弹窗都返回让 AI 判断（包括 info 类型）
+      if (interactive) {
         macroSessions.set(session.sessionId, session);
+        const kindHint = dialog.kind === "vb_runtime_error"
+          ? "VBA 运行时错误/编译错误"
+          : dialog.kind === "error"
+            ? "错误弹窗"
+            : dialog.kind === "confirmation"
+              ? "确认弹窗"
+              : dialog.kind === "info"
+                ? "信息弹窗"
+                : "未知弹窗";
         return {
           success: false,
-          message: `宏执行期间检测到弹窗：${summarizeDialog(dialog)}。请根据弹窗内容调用 excel_click_dialog 处理（如点击 结束/调试/确定/取消 等），然后调用 excel_resume_macro 恢复执行。`,
+          message: `宏执行期间检测到${kindHint}：${summarizeDialog(dialog)}。请根据弹窗内容调用 excel_click_dialog 处理（如点击 结束/调试/确定/取消 等），或调用 excel_fill_dialog 填充输入框，然后调用 excel_resume_macro 恢复执行。`,
           details: {
             sessionId: session.sessionId,
             macroName: session.macroName,
             workbook: session.workbookName,
+            kind: dialog.kind,
             dialogs: session.collectedDialogs,
             pendingDialog: enrichDialogInfo(dialog),
           },
         };
       }
 
-      // 自动处理（info 类型或非 interactive 模式）
+      // 非 interactive 模式：自动处理所有弹窗（原行为）
       const handled = await invokeExcelDialogButton(dialog.handle, action.buttons);
       if (!handled) continue;
 

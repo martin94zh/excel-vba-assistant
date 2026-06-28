@@ -185,10 +185,10 @@ export const clickDialogSchema = {
   type: OBJ,
   properties: {
     workbookId: { type: STR, description: "保留字段，当前版本可忽略" },
-    handle: { type: STR, description: "弹窗句柄，由 excel_list_dialogs 返回" },
+    handle: { type: STR, description: "弹窗句柄，由 excel_list_dialogs 或 excel_run_macro（interactive 模式）返回" },
     action: {
       type: STR,
-      description: "动作关键词：auto(自动)/ok/确定/cancel/取消/yes/是/no/否/end/结束/close/关闭/ignore/忽略/retry/重试/continue/继续",
+      description: "动作关键词：auto(自动)/ok/确定/cancel/取消/yes/是/no/否/end/结束/debug/调试/close/关闭/ignore/忽略/retry/重试/continue/继续",
     },
     buttonText: { type: STR, description: "精确按钮文本，例如 确定。优先于 action。" },
   },
@@ -200,7 +200,7 @@ export const fillDialogSchema = {
   type: OBJ,
   properties: {
     workbookId: { type: STR, description: "保留字段，当前版本可忽略" },
-    handle: { type: STR, description: "弹窗句柄，由 excel_list_dialogs 返回" },
+    handle: { type: STR, description: "弹窗句柄，由 excel_list_dialogs 或 excel_run_macro（interactive 模式）返回" },
     text: { type: STR, description: "要写入输入框的文本，例如 2026-03-31" },
     submit: { type: BOOL, description: "可选。写入后是否按回车提交，默认 false。" },
   },
