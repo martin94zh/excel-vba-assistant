@@ -48,7 +48,7 @@ syncDirectory/
 - **操作系统**：Windows 10 / 11（依赖 PowerShell + Excel COM）
 - **Excel**：已安装的桌面版 Excel（Office 2016 及以上推荐），并已打开目标工作簿
 - **PowerShell**：系统自带 Windows PowerShell 5.1 或 PowerShell 7
-- **Node.js**：18 及以上（MCP Server 运行依赖）
+- **Node.js**：18 及以上（**MCP Server 运行依赖，必须安装**）
 - **Trae / VS Code**：1.85 及以上
 
 ---
@@ -267,7 +267,35 @@ npm run build
 
 ---
 
-## 13. 如何运行宏
+## 13. 常见问题
+
+### 为什么插件体积这么小？
+
+`.vsix` 只包含运行所需的文件：
+
+- `dist/extension.js` / `dist/mcp-server.js` — 已打包压缩的代码
+- `resources/` — 图标和 Webview 资源
+- `skills/` — AI 指引文档
+- `package.json` / `README.md` / `LICENSE`
+
+源码（`src/`、`server/`、TypeScript 配置等）已被 `.vscodeignore` 排除，因此体积只有约 150 KB。
+
+### 没有安装 Node.js 能用吗？
+
+**不能完全使用。**
+
+- 插件主体（控制面板、文件同步、状态栏、日志等）不依赖 Node.js，可以正常运行。
+- 但 **MCP Server 需要 Node.js 18+** 才能启动。如果没有 Node.js，AI 无法通过 MCP 调用 `excel_*` 工具。
+
+安装 Node.js 后，MCP Server 会自动启动，无需额外配置。
+
+### 安装插件后 MCP 就可用吗？
+
+插件激活时会自动向当前工作区的 `.trae/mcp.json` 写入基础 MCP 配置。选择 Excel 文件并设置同步目录后，配置会自动更新为完整配置。AI 随后即可调用工具。
+
+---
+
+## 14. 如何运行宏
 
 1. 命令面板执行 `Excel VBA: 运行宏`
 2. 在弹出的 QuickPick 中选择要运行的宏（列出所有 `module.procedure` 形式的宏名）
@@ -290,7 +318,7 @@ npm run build
 
 ---
 
-## 14. 弹窗处理
+## 15. 弹窗处理
 
 运行宏时，如果 Excel 弹出 `MsgBox` / `InputBox` 等对话框，可以通过 MCP 工具处理：
 
@@ -302,7 +330,7 @@ npm run build
 
 ---
 
-## 15. Excel 置顶
+## 16. Excel 置顶
 
 在控制面板开启「Excel 置顶」后，Excel 主窗口会始终保持在最前面，方便边写代码边查看运行结果。
 
@@ -310,7 +338,7 @@ npm run build
 
 ---
 
-## 16. 如何使用 MCP Server
+## 17. 如何使用 MCP Server
 
 MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
@@ -397,7 +425,7 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ---
 
-## 17. 常见错误处理
+## 18. 常见错误处理
 
 | 错误现象 | 原因 | 解决方法 |
 |---------|------|---------|
@@ -413,7 +441,7 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ---
 
-## 18. 安全说明
+## 19. 安全说明
 
 ### 危险操作
 
@@ -442,7 +470,7 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ---
 
-## 19. 开发与调试
+## 20. 开发与调试
 
 ### 在 Trae / VS Code 中调试
 

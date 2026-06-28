@@ -89,6 +89,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // 立即推送一次已持久化的状态，避免 webview 启动时显示空白/丢失
   pushStateToWebview();
 
+  // 插件激活时立即写入基础 MCP 配置；选择 Excel 文件/目录后会再次更新
+  void writeMcpConfig();
+
   // 恢复时若已保存 workbookPath，自动检测 Excel 连接状态，避免面板显示「未知」
   // 检测器在恢复成功后启动，防止恢复完成前误触发清理
   void restoreExcelConnectionStatus().then(() => {
@@ -1377,7 +1380,6 @@ async function writeMcpConfig(): Promise<void> {
 
   const workbookPath = stateManager.get("workbookPath");
   const syncDir = stateManager.get("syncDirectory");
-  if (!workbookPath) return;
 
   const syncDirNorm = syncDir ? syncDir.replace(/\\/g, "/") : "";
   const targetWsFolder = syncDir
@@ -1390,9 +1392,8 @@ async function writeMcpConfig(): Promise<void> {
   if (!targetWsFolder) return;
 
   const serverJsPath = path.join(extensionContext.extensionPath, "dist", "mcp-server.js");
-  const envVars: Record<string, string> = {
-    VBE_FILE_PATH: workbookPath.replace(/\\/g, "/"),
-  };
+  const envVars: Record<string, string> = {};
+  if (workbookPath) envVars.VBE_FILE_PATH = workbookPath.replace(/\\/g, "/");
   if (syncDirNorm) envVars.VBE_LOCAL_DIR = syncDirNorm;
 
   const config = {
