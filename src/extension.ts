@@ -514,8 +514,8 @@ async function handleDisconnectExcel(): Promise<void> {
   stopFileWatcher();
   stopVbeToLocalWatcher();
 
-  // 清理 MCP 配置
-  await removeMcpConfig();
+  // 清空 MCP 环境变量（保留 server 条目，避免下次显示 no tools）
+  await clearMcpConfigEnv();
 
   // 第二步：立即清空所有持久化和运行期状态，确保即使 F5 中断也不会残留
   await stateManager.set("workbookPath", "");
@@ -1316,8 +1316,8 @@ async function handleExcelClosed(): Promise<void> {
     return;
   }
 
-  // Excel 关闭且目录清理成功后，移除 MCP 配置
-  await removeMcpConfig();
+  // Excel 关闭后，清空 MCP 环境变量（保留 server 条目，避免下次显示 no tools）
+  await clearMcpConfigEnv();
 
   await stateManager.set("workbookPath", "");
   await stateManager.set("syncDirectory", "");
@@ -1688,6 +1688,39 @@ async function removeMcpConfig(): Promise<void> {
       await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
       removeTrackedWorkspace(wf.uri.fsPath);
     } catch { /* ignore */ }
+  }
+}
+
+/**
+ * 清空 MCP 配置的环境变量，但保留 server 条目。
+ *
+ * 用于 Excel 关闭/断开时：不删除 MCP server 配置，只清空 env vars，
+ * 避免 Trae 丢失 MCP server 导致下次显示 "no tools"。
+ * MCP server 启动时总是注册所有工具，调用时才需要 Excel 连接，
+ * 因此保留 server 条目即可保持工具列表可用。
+ */
+async function clearMcpConfigEnv(): Promise<void> {
+  if (!extensionContext) return;
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) return;
+
+  const targetWsFolder = workspaceFolders[0];
+  const serverExePath = path.join(extensionContext.extensionPath, "dist", "mcp-server.exe");
+
+  // 保留 server 条目，清空 env vars；upsert 确保不产生重复条目
+  const config = {
+    command: serverExePath.replace(/\\/g, "/"),
+    args: [],
+    env: {} as Record<string, string>,
+  };
+
+  try {
+    const mcpJsonUri = vscode.Uri.joinPath(targetWsFolder.uri, ".trae", "mcp.json");
+    await upsertMcpServerConfig(mcpJsonUri, MCP_SERVER_NAME, config);
+    output.info(`已清空 MCP 环境变量（保留 server 条目）：${mcpJsonUri.fsPath}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`清空 MCP 环境变量失败：${msg}`);
   }
 }
 
