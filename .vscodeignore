@@ -7,3 +7,5 @@ tsconfig.json
 **/*.ts
 dist/mcp-server.js
 !dist/extension.js
+test-sync.ps1
+tools/

@@ -217,7 +217,11 @@ try {
     }
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; workbookPath = '${escapePowerShellSingleQuoted(this.filePath)}'; items = $result }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -283,7 +287,11 @@ try {
         macros = $macros
     }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -314,7 +322,11 @@ try {
     }
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; items = $items }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -343,7 +355,11 @@ try {
     $codeBase64 = [System.Convert]::ToBase64String($codeBytes)
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; componentName = '${escapePowerShellSingleQuoted(componentName)}'; componentType = $typeName; codeBase64 = $codeBase64 }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     const result = await runPowerShell(script);
     if (result.success && result.output) {
@@ -387,7 +403,11 @@ try {
     $hash = $sha256.ComputeHash($bytes)
     $hashHex = [BitConverter]::ToString($hash) -replace "-", ""
     Write-Output $hashHex
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -606,7 +626,11 @@ try {
     [System.IO.File]::WriteAllText($manifestFile, $manifestJson, $utf8NoBom)
     Write-Output ""
     Write-Output "同步完成: 共 $($components.Count) 个组件, 删除 $deleted 个本地文件"
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     const result = await runPowerShell(script);
     return result;
@@ -864,7 +888,11 @@ try {
 
     Write-Output ""
     Write-Output "同步完成: 新增 $added / 更新 $updated / 跳过 $skipped / 未变 $unchanged / 删除 $vbeDeleted"
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     const result = await runPowerShell(script);
     if (result.success) {
@@ -918,7 +946,11 @@ try {
     }
     $payload = @{ macros = $macros }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -975,7 +1007,11 @@ try {
     }
     $payload = @{ sheets = $sheets }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -1011,7 +1047,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ sheetName = $actualSheet; address = $address; values = $values }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1046,7 +1086,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}'; values = $values }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1077,7 +1121,11 @@ try {
     $wb.Save()
     $payload = @{ success = $true; sheetName = '${nameLit}'; message = "工作表 ${nameLit} 已创建" }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$beforeLit/g, beforeLit).replace(/\$afterLit/g, afterLit);
     return runPowerShell(script);
   }
@@ -1099,7 +1147,11 @@ try {
     $wb.Save()
     $payload = @{ success = $true; sheetName = '${escapePowerShellSingleQuoted(name)}'; message = "工作表已删除" }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -1121,7 +1173,11 @@ try {
     $wb.Save()
     $payload = @{ success = $true; oldName = '${escapePowerShellSingleQuoted(oldName)}'; newName = '${escapePowerShellSingleQuoted(newName)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }
@@ -1146,7 +1202,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$valueLit/g, valueLit).replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1189,7 +1249,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = [string]$rng.Address($false, $false) }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1213,7 +1277,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1250,7 +1318,11 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1285,7 +1357,11 @@ try {
     } else {
         throw "SetWindowPos 调用失败"
     }
-} catch { Write-Error $_.Exception.Message }
+} catch {
+    $errMsg = [string]$_.Exception.Message
+    $errStack = [string]$_.ScriptStackTrace
+    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+}
 `;
     return runPowerShell(script);
   }

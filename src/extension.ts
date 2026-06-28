@@ -80,6 +80,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   output.info("Excel VBA Assistant 已激活");
 
+  // 自动设置文件图标主题，安装后无需用户手动选择
+  void setExcelVbaIconTheme();
+
   // 自动同步开关已开启时，启动双向自动同步
   if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
     startFileWatcher();
@@ -1382,14 +1385,8 @@ async function writeMcpConfig(): Promise<void> {
   const syncDir = stateManager.get("syncDirectory");
 
   const syncDirNorm = syncDir ? syncDir.replace(/\\/g, "/") : "";
-  const targetWsFolder = syncDir
-    ? workspaceFolders.find((wf) => {
-        const normalizedSyncDir = syncDir.replace(/\\/g, "/").toLowerCase();
-        const wsPath = wf.uri.fsPath.replace(/\\/g, "/").toLowerCase();
-        return normalizedSyncDir === wsPath || normalizedSyncDir.startsWith(wsPath + "/");
-      })
-    : workspaceFolders[0];
-  if (!targetWsFolder) return;
+  // 固定使用第一个工作区写入 MCP 配置，避免多工作区/目录切换时产生重复配置
+  const targetWsFolder = workspaceFolders[0];
 
   const serverExePath = path.join(extensionContext.extensionPath, "dist", "mcp-server.exe");
   const envVars: Record<string, string> = {};
@@ -1419,25 +1416,25 @@ async function removeMcpConfig(): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) return;
 
-  const syncDir = stateManager.get("syncDirectory");
-  if (!syncDir) {
-    for (const wf of workspaceFolders) {
-      try {
-        await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
-      } catch { /* ignore */ }
-    }
-    return;
-  }
-
-  const normalizedSyncDir = syncDir.replace(/\\/g, "/").toLowerCase();
-  const targetWsFolder = workspaceFolders.find((wf) => {
-    const wsPath = wf.uri.fsPath.replace(/\\/g, "/").toLowerCase();
-    return normalizedSyncDir === wsPath || normalizedSyncDir.startsWith(wsPath + "/");
-  });
-  if (targetWsFolder) {
+  // 清理所有工作区中的同名 MCP 配置，防止重复或残留
+  for (const wf of workspaceFolders) {
     try {
-      await removeMcpServerConfig(vscode.Uri.joinPath(targetWsFolder.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
+      await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
     } catch { /* ignore */ }
+  }
+}
+
+async function setExcelVbaIconTheme(): Promise<void> {
+  try {
+    const config = vscode.workspace.getConfiguration("workbench");
+    const current = config.get<string>("iconTheme");
+    if (current !== "excelVbaIcons") {
+      await config.update("iconTheme", "excelVbaIcons", true);
+      output.info("已自动设置文件图标主题为 Excel VBA Icons");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`自动设置图标主题失败：${msg}`);
   }
 }
 
