@@ -946,7 +946,17 @@ function startExcelCloseWatcher(): void {
       excelUnavailableCount = 0;
       return;
     }
-    const expectedPid = stateManager.get("excelProcessId");
+    let expectedPid = stateManager.get("excelProcessId");
+
+    // 如果未记录 PID，先尝试通过 COM 获取一次，并持久化；成功后就走 PID 检测路径
+    if (!expectedPid || expectedPid <= 0) {
+      const detectedPid = await getExcelProcessId(workbookPath);
+      if (detectedPid > 0) {
+        await stateManager.set("excelProcessId", detectedPid);
+        expectedPid = detectedPid;
+        output.info(`检测到 Excel 进程 PID：${detectedPid}，后续优先使用 PID 检测`);
+      }
+    }
 
     // 如果记录了 PID，优先只检查进程是否还存在，避免频繁调用 COM 导致 Excel 进程无法自然退出
     if (expectedPid && expectedPid > 0) {
@@ -986,7 +996,8 @@ function startExcelCloseWatcher(): void {
       return;
     }
 
-    // 没有记录 PID 时，退回到 COM 检测
+    // 实在拿不到 PID 时，才退回到 COM 检测
+    output.warn("未记录 Excel PID，退回到 COM 可用性检测");
     const check = await isExcelWithWorkbookRunning(workbookPath);
     let available = check.running;
 
