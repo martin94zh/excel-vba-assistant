@@ -1369,7 +1369,6 @@ try {
     # 先激活窗口，确保置顶命令生效
     [void][Win32TopMost]::ShowWindowAsync($hwnd, 1) # SW_SHOWNORMAL
     [void][Win32TopMost]::SetForegroundWindow($hwnd)
-    Start-Sleep -Milliseconds 100
 
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
     $flags = $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW

@@ -953,7 +953,17 @@ function startExcelCloseWatcher(): void {
       }
     }
 
-    const available = await isExcelWithWorkbookRunning(workbookPath);
+    const check = await isExcelWithWorkbookRunning(workbookPath);
+    let available = check.running;
+
+    // 如果工作簿仍在运行，但所在进程与记录的不一致，说明工作簿已切换到其他 Excel 实例，视为不稳定状态
+    if (available && expectedPid && expectedPid > 0 && check.actualPid > 0 && check.actualPid !== expectedPid) {
+      output.warn(
+        `工作簿所在 Excel 实例发生变化：记录 PID=${expectedPid}，实际 PID=${check.actualPid}`
+      );
+      available = false;
+    }
+
     if (lastExcelAvailable && !available) {
       excelUnavailableCount++;
       output.warn(`检测到 Excel 可能已关闭（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`);
@@ -999,8 +1009,11 @@ try {
   }
 }
 
-/** 检查指定工作簿是否仍在 Excel 中打开 */
-async function isExcelWithWorkbookRunning(workbookPath: string): Promise<boolean> {
+/** 检查指定工作簿是否仍在 Excel 中打开，同时返回该工作簿所在 Excel 实例的 PID */
+async function isExcelWithWorkbookRunning(
+  workbookPath: string
+): Promise<{ running: boolean; actualPid: number; reason: string }> {
+  const defaultResult = { running: false, actualPid: 0, reason: "exception" };
   try {
     const wbName = path.basename(workbookPath);
     const script = `
@@ -1012,27 +1025,54 @@ try {
     public class Win32Check {
         [DllImport(\"user32.dll\")]
         public static extern bool IsWindow(IntPtr hWnd);
+        [DllImport(\"user32.dll\")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
     }
 "@
     $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $found = $false
+    $found = $null
     foreach ($w in $excel.Workbooks) {
-        if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break }
+        if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $w; break }
     }
-    if (-not $found) { Write-Output "CLOSED:no-workbook"; return }
+    if ($found -eq $null) {
+        $payload = @{ running = $false; actualPid = 0; reason = "no-workbook" }
+        Write-Output (ConvertTo-Json $payload -Compress)
+        return
+    }
     $hwnd = [IntPtr]::new([long]$excel.Hwnd)
-    if (-not [Win32Check]::IsWindow($hwnd)) { Write-Output "CLOSED:invalid-hwnd"; return }
-    Write-Output "RUNNING"
+    if (-not [Win32Check]::IsWindow($hwnd)) {
+        $payload = @{ running = $false; actualPid = 0; reason = "invalid-hwnd" }
+        Write-Output (ConvertTo-Json $payload -Compress)
+        return
+    }
+    $pidValue = [uint32]0
+    [void][Win32Check]::GetWindowThreadProcessId($hwnd, [ref]$pidValue)
+    $runningPayload = @{ running = $true; actualPid = [int]$pidValue; reason = "ok" }
+    Write-Output (ConvertTo-Json $runningPayload -Compress)
 } catch {
-    Write-Output "CLOSED:exception"
+    $errPayload = @{ running = $false; actualPid = 0; reason = "exception" }
+    Write-Output (ConvertTo-Json $errPayload -Compress)
 }
 `;
     const result = await runPowerShell(script);
-    const checkOutput = (result.output || "").trim();
-    output.info(`Excel 可用性检测结果：${checkOutput} (success=${result.success})`);
-    return result.success && checkOutput === "RUNNING";
+    if (result.success && result.output) {
+      try {
+        const parsed = JSON.parse(result.output.trim());
+        output.info(
+          `Excel 可用性检测：running=${parsed.running}, pid=${parsed.actualPid}, reason=${parsed.reason}`
+        );
+        return {
+          running: !!parsed.running,
+          actualPid: Number(parsed.actualPid) || 0,
+          reason: String(parsed.reason || "unknown"),
+        };
+      } catch {
+        output.warn(`Excel 可用性检测返回解析失败：${result.output}`);
+      }
+    }
+    return defaultResult;
   } catch {
-    return false;
+    return defaultResult;
   }
 }
 
