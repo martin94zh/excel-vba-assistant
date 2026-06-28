@@ -1078,7 +1078,7 @@ try {
   }
 }
 
-/** 检查指定 PID 的 Excel 进程是否仍有主窗口（可见或最小化均视为存在，对话框不算） */
+/** 检查指定 PID 的 Excel 进程是否仍有主窗口句柄（不判断可见/最小化，避免误判） */
 async function hasExcelMainWindow(pid: number): Promise<boolean> {
   try {
     const result = await runPowerShell(`
@@ -1091,9 +1091,7 @@ public static class JrWindowChecker {
   [DllImport("user32.dll")]
   public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
   [DllImport("user32.dll")]
-  public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool IsIconic(IntPtr hWnd);
+  public static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -1106,9 +1104,7 @@ $found = $false
 $excelClassPattern = [regex]::new('^(XLMAIN|EXCEL)$', 'IgnoreCase')
 [JrWindowChecker]::EnumWindows({
   param($hWnd, $lParam)
-  $isVisible = [JrWindowChecker]::IsWindowVisible($hWnd)
-  $isIconic = [JrWindowChecker]::IsIconic($hWnd)
-  if (-not $isVisible -and -not $isIconic) { return $true }
+  if (-not [JrWindowChecker]::IsWindow($hWnd)) { return $true }
   $winPid = [uint32]0
   [void][JrWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
   if ($winPid -ne $targetPid) { return $true }
