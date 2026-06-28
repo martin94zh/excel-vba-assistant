@@ -1391,14 +1391,14 @@ async function writeMcpConfig(): Promise<void> {
     : workspaceFolders[0];
   if (!targetWsFolder) return;
 
-  const serverJsPath = path.join(extensionContext.extensionPath, "dist", "mcp-server.js");
+  const serverExePath = path.join(extensionContext.extensionPath, "dist", "mcp-server.exe");
   const envVars: Record<string, string> = {};
   if (workbookPath) envVars.VBE_FILE_PATH = workbookPath.replace(/\\/g, "/");
   if (syncDirNorm) envVars.VBE_LOCAL_DIR = syncDirNorm;
 
   const config = {
-    command: "node",
-    args: [serverJsPath.replace(/\\/g, "/")],
+    command: serverExePath.replace(/\\/g, "/"),
+    args: [],
     env: envVars,
   };
 

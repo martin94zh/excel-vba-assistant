@@ -5,4 +5,5 @@ server/**
 tsconfig.json
 **/*.map
 **/*.ts
-!dist/**/*.js
+dist/mcp-server.js
+!dist/extension.js

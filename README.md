@@ -48,7 +48,6 @@ syncDirectory/
 - **操作系统**：Windows 10 / 11（依赖 PowerShell + Excel COM）
 - **Excel**：已安装的桌面版 Excel（Office 2016 及以上推荐），并已打开目标工作簿
 - **PowerShell**：系统自带 Windows PowerShell 5.1 或 PowerShell 7
-- **Node.js**：18 及以上（**MCP Server 运行依赖，必须安装**）
 - **Trae / VS Code**：1.85 及以上
 
 ---
@@ -273,21 +272,25 @@ npm run build
 
 `.vsix` 只包含运行所需的文件：
 
-- `dist/extension.js` / `dist/mcp-server.js` — 已打包压缩的代码
+- `dist/extension.js` — 扩展主程序
+- `dist/mcp-server.exe` — 已打包的 MCP Server（内含 Node.js 运行时，无需用户单独安装）
 - `resources/` — 图标和 Webview 资源
 - `skills/` — AI 指引文档
 - `package.json` / `README.md` / `LICENSE`
 
-源码（`src/`、`server/`、TypeScript 配置等）已被 `.vscodeignore` 排除，因此体积只有约 150 KB。
+源码（`src/`、`server/`、TypeScript 配置等）已被 `.vscodeignore` 排除。
+
+由于 `mcp-server.exe` 自包含 Node.js 运行时，插件体积会比纯 JS 方案大，但用户无需额外安装 Node.js。
 
 ### 没有安装 Node.js 能用吗？
 
-**不能完全使用。**
+**可以。**
 
-- 插件主体（控制面板、文件同步、状态栏、日志等）不依赖 Node.js，可以正常运行。
-- 但 **MCP Server 需要 Node.js 18+** 才能启动。如果没有 Node.js，AI 无法通过 MCP 调用 `excel_*` 工具。
+MCP Server 已打包为 `dist/mcp-server.exe`，内置 Node.js 运行时。用户无需安装 Node.js 即可使用全部功能。
 
-安装 Node.js 后，MCP Server 会自动启动，无需额外配置。
+### 为什么之前版本需要 Node.js？
+
+早期版本使用 `node dist/mcp-server.js` 启动 MCP Server，因此依赖用户本机 Node.js。v0.5.2 起改用 `pkg` 打包为独立可执行文件，不再依赖外部 Node.js。
 
 ### 安装插件后 MCP 就可用吗？
 
@@ -352,10 +355,8 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 {
   "mcpServers": {
     "excel-vba-assistant": {
-      "command": "node",
-      "args": [
-        "D:\\BaiduNetdiskDownload\\jr-vbe-helper-1.0.8\\assistance\\excel-vba-assistant\\dist\\mcp-server.js"
-      ],
+      "command": "D:\\BaiduNetdiskDownload\\jr-vbe-helper-1.0.8\\assistance\\excel-vba-assistant\\dist\\mcp-server.exe",
+      "args": [],
       "env": {
         "VBE_FILE_PATH": "D:\\work\\my_addin.xlam",
         "VBE_LOCAL_DIR": "D:\\work\\vba_sync",

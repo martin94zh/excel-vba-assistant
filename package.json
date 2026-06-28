@@ -2,7 +2,7 @@
   "name": "excel-vba-assistant",
   "displayName": "Excel VBA Assistant",
   "description": "Excel VBA 本地同步器 + AI 编程桥接器：在 Trae/VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "publisher": "excel-vba-assistant",
   "license": "MIT",
   "icon": "resources/plugin-icon.png",
@@ -147,7 +147,8 @@
   "scripts": {
     "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
     "compile:server": "esbuild ./server/index.ts --bundle --outfile=dist/mcp-server.js --format=cjs --platform=node --target=node18 --minify",
-    "build": "npm run compile && npm run compile:server",
+    "compile:server:exe": "pkg ./dist/mcp-server.js --targets node18-win-x64 --output ./dist/mcp-server.exe",
+    "build": "npm run compile && npm run compile:server && npm run compile:server:exe",
     "package": "npm run build && vsce package --allow-missing-repository",
     "vscode:prepublish": "npm run build"
   },
@@ -156,6 +157,7 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.20.0",
+    "pkg": "^5.8.1",
     "typescript": "^5.3.0"
   },
   "dependencies": {
