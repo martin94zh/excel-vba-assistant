@@ -1327,9 +1327,10 @@ try {
     return runPowerShell(script);
   }
 
-  /** 设置 Excel 主窗口置顶或取消置顶（不经过 COM，直接调用 Win32 API） */
+  /** 设置 Excel 主窗口置顶或取消置顶（通过 COM 获取当前工作簿实例的 HWND 后调用 Win32 API） */
   async setWindowTopMost(onTop: boolean): Promise<ExcelComResult> {
     const action = onTop ? "置顶" : "取消置顶";
+    const wbName = basename(this.filePath);
     const script = `
 $ErrorActionPreference = "Stop"
 try {
@@ -1339,24 +1340,34 @@ try {
     public class Win32TopMost {
         [DllImport(\"user32.dll\", SetLastError = true)]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        [DllImport(\"user32.dll\", SetLastError = true)]
+        public static extern bool IsWindow(IntPtr hWnd);
     }
 "@
+
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    $targetWbName = '${escapePowerShellSingleQuoted(wbName)}'
+    $found = $false
+    foreach ($w in $excel.Workbooks) {
+        if ($w.Name -eq $targetWbName) { $found = $true; break }
+    }
+    if (-not $found) { throw "未找到工作簿：$targetWbName" }
+
+    $hwnd = [IntPtr]::new([long]$excel.Hwnd)
+    if (-not [Win32TopMost]::IsWindow($hwnd)) { throw "Excel 窗口句柄无效：$hwnd" }
+
     $HWND_TOPMOST = [IntPtr]::new(-1)
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
     $SWP_NOMOVE = 0x0002
     $SWP_NOSIZE = 0x0001
 
-    $proc = Get-Process excel | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    if ($proc -eq $null) { throw "未找到 Excel 进程" }
-    $hwnd = $proc.MainWindowHandle
-
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $result = [Win32TopMost]::SetWindowPos([IntPtr]::new([long]$hwnd), $target, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE)
-    if ($result) {
-        Write-Output "Excel 窗口已${action}"
-    } else {
-        throw "SetWindowPos 调用失败"
+    $result = [Win32TopMost]::SetWindowPos($hwnd, $target, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE)
+    if (-not $result) {
+        $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "SetWindowPos 调用失败，错误码：$err"
     }
+    Write-Output "Excel 窗口已${action}"
 } catch {
     $errMsg = [string]$_.Exception.Message
     $errStack = [string]$_.ScriptStackTrace
