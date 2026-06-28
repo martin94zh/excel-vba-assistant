@@ -929,7 +929,7 @@ function stopFileWatcher(): void {
 // Excel 关闭检测（需求 3）
 // ============================================================
 
-const EXCEL_CHECK_INTERVAL_MS = 5000;
+const EXCEL_CHECK_INTERVAL_MS = 2000;
 
 function startExcelCloseWatcher(): void {
   stopExcelCloseWatcher();

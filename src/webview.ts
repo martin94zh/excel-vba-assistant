@@ -37,7 +37,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private onCommand: (msg: WebviewMessage) => void;
-  private version = "0.5.6";
+  private version = "0.5.7";
 
   constructor(
     private readonly extensionUri: vscode.Uri,
