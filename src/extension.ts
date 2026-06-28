@@ -10,6 +10,7 @@
  */
 import * as vscode from "vscode";
 import * as path from "path";
+import * as os from "os";
 import * as fs from "fs";
 import { mkdir, readdir, rm } from "fs/promises";
 
@@ -199,10 +200,12 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
   return true;
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
   stopFileWatcher();
   stopVbeToLocalWatcher();
   stopExcelCloseWatcher();
+  // 扩展被禁用/重载时清理 MCP 配置
+  await removeMcpConfig();
 }
 
 // ============================================================
@@ -1517,11 +1520,45 @@ async function writeMcpConfig(): Promise<void> {
     try { await vscode.workspace.fs.createDirectory(dirUri); } catch { /* exists */ }
     const mcpJsonUri = vscode.Uri.joinPath(dirUri, "mcp.json");
     await upsertMcpServerConfig(mcpJsonUri, MCP_SERVER_NAME, config);
+    addTrackedWorkspace(wsRoot.fsPath);
     output.info(`已写入 MCP 配置：${mcpJsonUri.fsPath}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     output.warn(`写入 MCP 配置失败：${msg}`);
   }
+}
+
+const MCP_WS_TRACK_DIR = path.join(process.env.APPDATA || os.homedir(), "excel-vba-assistant");
+const MCP_WS_TRACK_FILE = path.join(MCP_WS_TRACK_DIR, "mcp-workspaces.json");
+
+function readTrackedWorkspaces(): string[] {
+  try {
+    if (!fs.existsSync(MCP_WS_TRACK_FILE)) return [];
+    return JSON.parse(fs.readFileSync(MCP_WS_TRACK_FILE, "utf-8")) as string[];
+  } catch { return []; }
+}
+
+function writeTrackedWorkspaces(list: string[]): void {
+  try {
+    if (!fs.existsSync(MCP_WS_TRACK_DIR)) {
+      fs.mkdirSync(MCP_WS_TRACK_DIR, { recursive: true });
+    }
+    fs.writeFileSync(MCP_WS_TRACK_FILE, JSON.stringify(list, null, 2), "utf-8");
+  } catch { /* ignore */ }
+}
+
+function addTrackedWorkspace(wsPath: string): void {
+  const list = readTrackedWorkspaces();
+  if (!list.includes(wsPath)) {
+    list.push(wsPath);
+    writeTrackedWorkspaces(list);
+  }
+}
+
+function removeTrackedWorkspace(wsPath: string): void {
+  let list = readTrackedWorkspaces();
+  list = list.filter((p) => p !== wsPath);
+  writeTrackedWorkspaces(list);
 }
 
 async function removeMcpConfig(): Promise<void> {
@@ -1532,6 +1569,7 @@ async function removeMcpConfig(): Promise<void> {
   for (const wf of workspaceFolders) {
     try {
       await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
+      removeTrackedWorkspace(wf.uri.fsPath);
     } catch { /* ignore */ }
   }
 }
