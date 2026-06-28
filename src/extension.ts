@@ -997,7 +997,7 @@ function startExcelCloseWatcher(): void {
       available = false;
     }
 
-    if (lastExcelAvailable && !available) {
+    if (!available) {
       excelUnavailableCount++;
       output.warn(`检测到 Excel 可能已关闭（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`);
       if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {

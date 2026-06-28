@@ -2,7 +2,7 @@
   "name": "excel-vba-assistant",
   "displayName": "Excel VBA Assistant",
   "description": "Excel VBA 本地同步器 + AI 编程桥接器：在 Trae/VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "publisher": "excel-vba-assistant",
   "license": "MIT",
   "icon": "resources/plugin-icon.png",
