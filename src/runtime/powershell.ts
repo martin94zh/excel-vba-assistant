@@ -129,16 +129,39 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 /**
  * 通过 COM 检查 Excel 是否仍打开指定路径的工作簿。
- * 所有 COM 对象均显式释放，避免残留引用导致 Excel 无法退出。
+ * 如传入 expectedPid，会校验 GetActiveObject 获取到的 Excel 实例是否属于该进程，
+ * 避免多实例 Excel 时取错对象导致误判。
+ * 所有 COM 对象均使用 FinalReleaseComObject 彻底释放，避免残留引用导致 Excel 无法退出。
  */
-export async function isExcelWorkbookOpen(workbookPath: string): Promise<boolean> {
+export async function isExcelWorkbookOpen(workbookPath: string, expectedPid?: number): Promise<boolean> {
+  const pidCheck = expectedPid && expectedPid > 0 ? `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class JrWinApi {
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+}
+"@
+$targetPid = ${expectedPid}
+` : "";
   const script = `
 $ErrorActionPreference = "Stop"
+${pidCheck}
 $excel = $null
 $workbooks = $null
 $wb = $null
 try {
     $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    if ($targetPid -gt 0) {
+        $hwnd = $excel.Hwnd
+        $actualPid = [uint32]0
+        [void][JrWinApi]::GetWindowThreadProcessId($hwnd, [ref]$actualPid)
+        if ($actualPid -ne $targetPid) {
+            Write-Output "ABSENT"
+            exit
+        }
+    }
     $workbooks = $excel.Workbooks
     $found = $false
     for ($i = 1; $i -le $workbooks.Count; $i++) {
@@ -147,16 +170,18 @@ try {
             $found = $true
             break
         }
-        [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb)
+        [void][System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($wb)
         $wb = $null
     }
     if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
 } catch {
     Write-Output "ABSENT"
 } finally {
-    if ($wb -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb); $wb = $null }
-    if ($workbooks -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($workbooks); $workbooks = $null }
-    if ($excel -ne $null) { [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel); $excel = $null }
+    if ($wb -ne $null) { [void][System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($wb); $wb = $null }
+    if ($workbooks -ne $null) { [void][System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($workbooks); $workbooks = $null }
+    if ($excel -ne $null) { [void][System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($excel); $excel = $null }
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }

@@ -1022,8 +1022,8 @@ function startExcelCloseWatcher(): void {
       output.info(`Excel 进程 ${expectedPid} 首次可用，启动宽限期 ${EXCEL_STARTUP_GRACE_PERIOD_MS}ms`);
     }
 
-    // 使用 COM 检测目标工作簿是否仍被 Excel 打开（句柄/可见性检测不可靠）
-    const workbookOpen = await isExcelWorkbookOpen(workbookPath);
+    // 使用 COM 检测目标工作簿是否仍被 Excel 打开（传入 PID 避免多实例取错）
+    const workbookOpen = await isExcelWorkbookOpen(workbookPath, expectedPid);
     if (workbookOpen !== lastExcelWindowVisible) {
       lastExcelWindowVisible = workbookOpen;
       output.info(`Excel 工作簿状态变化：${workbookOpen ? "PRESENT" : "ABSENT"}`);
@@ -1035,7 +1035,7 @@ function startExcelCloseWatcher(): void {
         output.info(`Excel 工作簿尚未打开，处于启动宽限期，暂不清理`);
         return;
       }
-      excelUnavailableCount++;
+      excelUnavailableCount = Math.min(excelUnavailableCount + 1, EXCEL_UNAVAILABLE_THRESHOLD);
       output.warn(
         `Excel 进程 ${expectedPid} 仍在运行，但未检测到目标工作簿（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
       );
@@ -1048,10 +1048,13 @@ function startExcelCloseWatcher(): void {
       return;
     }
 
+    // 检测到工作簿存在时，也使用滞回避免单次抖动立刻恢复
     if (excelUnavailableCount > 0) {
-      output.info("Excel 工作簿恢复，取消关闭计数");
+      excelUnavailableCount--;
+      if (excelUnavailableCount === 0) {
+        output.info("Excel 工作簿恢复，取消关闭计数");
+      }
     }
-    excelUnavailableCount = 0;
     lastExcelAvailable = true;
   }, EXCEL_CHECK_INTERVAL_MS);
 }
