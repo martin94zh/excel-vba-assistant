@@ -93,6 +93,7 @@ export class VbaClient {
     if (preCheck) return preCheck.message;
     const script = `
 $ErrorActionPreference = "Stop"
+$excel = $null
 try {
     $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
     $wb = $null
@@ -106,6 +107,13 @@ try {
         Write-Output "VBA_ACCESS_DENIED"
     } else {
         Write-Output "ERROR:$msg"
+    }
+} finally {
+    if ($excel -ne $null) {
+        [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel)
+        $excel = $null
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
     }
 }
 `;

@@ -134,6 +134,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 export async function ensureExcelRunning(wbName: string): Promise<ExcelComResult | null> {
   const checkScript = `
 $ErrorActionPreference = "Stop"
+$excel = $null
 try {
     $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
     $found = $false
@@ -147,6 +148,13 @@ try {
     }
 } catch {
     Write-Output "EXCEL_NOT_RUNNING"
+} finally {
+    if ($excel -ne $null) {
+        [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel)
+        $excel = $null
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+    }
 }
 `;
   const result = await runPowerShell(checkScript);

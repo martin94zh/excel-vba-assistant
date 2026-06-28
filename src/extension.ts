@@ -51,6 +51,9 @@ let excelUnavailableCount = 0;
 const EXCEL_UNAVAILABLE_THRESHOLD = 2;
 let lastExcelProcessAlive = false;
 let lastExcelWindowVisible = false;
+let excelFirstSeenAliveAt = 0;
+const EXCEL_STARTUP_GRACE_PERIOD_MS = 10000;
+let isInitializingExcel = false;
 
 // 自动同步变更队列：记录本地和 VBE 的修改事件，按时间顺序处理
 let pendingChanges: PendingChange[] = [];
@@ -135,9 +138,9 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
       output.error(`恢复连接状态时自动打开 Excel 失败：${openResult.message}`);
     }
   }
-  // 如果当前没有记录 PID，尝试获取已运行 Excel 的 PID
+  // 如果当前没有记录 PID，尝试通过窗口标题反查已运行 Excel 的 PID（不使用 COM）
   if (excelPid === 0) {
-    excelPid = await getExcelProcessId(workbookPath);
+    excelPid = await findExcelProcessIdByWindow(workbookPath);
   }
   if (accessError) {
     stateManager.setRuntime({ lastError: accessError, serviceStatus: "error" });
@@ -174,6 +177,12 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
   if (syncDir) {
     output.info("恢复连接后开始自动执行 VBE → 本地 同步");
     await executeSync("vbe-to-local");
+
+    if (stateManager.get("serviceStatus") !== "synced") {
+      output.warn("恢复连接时初始同步未完成，暂不启用自动同步");
+      pushStateToWebview();
+      return true;
+    }
 
     // 同步成功后自动开启自动同步和自动执行 VBA（除非用户之后手工关闭）
     await stateManager.set("autoSync", true);
@@ -366,11 +375,10 @@ async function handleSelectWorkbook(): Promise<void> {
         vscode.window.showErrorMessage(`无法自动打开 Excel：${openResult.message}`);
       }
     }
-    // 如果当前没有记录 PID，尝试获取已运行 Excel 的 PID
+    // 如果当前没有记录 PID，尝试通过窗口标题反查已运行 Excel 的 PID（不使用 COM）
     if (excelPid === 0) {
-      excelPid = await getExcelProcessId(filePath);
+      excelPid = await findExcelProcessIdByWindow(filePath);
     }
-
     if (accessError) {
       output.error(accessError);
       stateManager.setRuntime({ lastError: accessError, serviceStatus: "error" });
@@ -390,17 +398,36 @@ async function handleSelectWorkbook(): Promise<void> {
   // 已设置同步目录时直接执行 VBE → 本地 同步（不再询问）
   if (syncDir) {
     output.info("已选择 Excel 文件，开始自动执行 VBE → 本地 同步");
-    await executeSync("vbe-to-local");
+    isInitializingExcel = true;
+    try {
+      await executeSync("vbe-to-local");
 
-    // 同步成功后自动开启自动同步和自动执行 VBA（除非用户之后手工关闭）
-    await stateManager.set("autoSync", true);
-    await stateManager.set("autoRunVba", true);
-    startFileWatcher();
-    startVbeToLocalWatcher();
-    output.info("已自动开启自动同步和自动执行 VBA");
+      // 同步完成后再次确认 Excel 仍可用，防止同步期间 Excel 关闭导致状态错乱
+      if (client) {
+        const reCheck = await client.checkAccess();
+        if (reCheck) {
+          output.warn(`同步后 Excel 不再可用：${reCheck}`);
+          stateManager.setRuntime({ lastError: reCheck, serviceStatus: "error" });
+          return;
+        }
+      }
+      if (stateManager.get("serviceStatus") !== "synced") {
+        output.warn("初始同步未完成，暂不启用自动同步");
+        return;
+      }
 
-    // 写入 MCP 配置，让 AI 可以直接调用 Excel/VBA 工具
-    await writeMcpConfig();
+      // 同步成功后自动开启自动同步和自动执行 VBA（除非用户之后手工关闭）
+      await stateManager.set("autoSync", true);
+      await stateManager.set("autoRunVba", true);
+      startFileWatcher();
+      startVbeToLocalWatcher();
+      output.info("已自动开启自动同步和自动执行 VBA");
+
+      // 写入 MCP 配置，让 AI 可以直接调用 Excel/VBA 工具
+      await writeMcpConfig();
+    } finally {
+      isInitializingExcel = false;
+    }
   }
 }
 
@@ -739,6 +766,11 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
       : await client.syncLocalToVbe(syncDir);
 
     if (result.success) {
+      // 同步过程中若连接已被重置（如 Excel 关闭或手动断开），不再更新为 synced
+      if (!stateManager.get("workbookPath")) {
+        output.warn("同步完成时检测到已断开连接，忽略同步结果");
+        return;
+      }
       const summary = (result.output || "同步完成").split("\n").pop() || "同步完成";
       stateManager.setRuntime({
         lastSyncDirection: direction,
@@ -943,6 +975,7 @@ function startExcelCloseWatcher(): void {
   excelUnavailableCount = 0;
   lastExcelProcessAlive = false;
   lastExcelWindowVisible = false;
+  excelFirstSeenAliveAt = 0;
   excelCheckTimer = setInterval(async () => {
     const workbookPath = stateManager.get("workbookPath");
     if (!workbookPath) {
@@ -950,84 +983,73 @@ function startExcelCloseWatcher(): void {
       excelUnavailableCount = 0;
       return;
     }
-    let expectedPid = stateManager.get("excelProcessId");
-
-    // 如果未记录 PID，先尝试通过 COM 获取一次，并持久化；成功后就走 PID 检测路径
-    if (!expectedPid || expectedPid <= 0) {
-      const detectedPid = await getExcelProcessId(workbookPath);
-      if (detectedPid > 0) {
-        await stateManager.set("excelProcessId", detectedPid);
-        expectedPid = detectedPid;
-        output.info(`检测到 Excel 进程 PID：${detectedPid}，后续优先使用 PID 检测`);
-      }
-    }
-
-    // 如果记录了 PID，优先只检查进程是否还存在，避免频繁调用 COM 导致 Excel 进程无法自然退出
-    if (expectedPid && expectedPid > 0) {
-      const alive = await isExcelProcessAlive(expectedPid);
-      if (alive !== lastExcelProcessAlive) {
-        lastExcelProcessAlive = alive;
-        output.info(`Excel 进程 ${expectedPid} 状态变化：${alive ? "ALIVE" : "DEAD"}`);
-      }
-      if (!alive) {
-        await handleExcelClosed();
-        return;
-      }
-      // 进程还在时，进一步检查是否仍有可见窗口；部分场景 Excel 窗口已关闭但进程残留
-      const hasWindow = await hasExcelVisibleWindow(expectedPid);
-      if (hasWindow !== lastExcelWindowVisible) {
-        lastExcelWindowVisible = hasWindow;
-        output.info(`Excel 进程 ${expectedPid} 窗口可见性变化：${hasWindow ? "VISIBLE" : "HIDDEN"}`);
-      }
-      if (!hasWindow) {
-        excelUnavailableCount++;
-        output.warn(
-          `Excel 进程 ${expectedPid} 仍在运行，但已无可视窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
-        );
-        if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {
-          output.info("Excel 窗口已关闭且进程无可见窗口，执行关闭清理");
-          await handleExcelClosed();
-          excelUnavailableCount = 0;
-        }
-        lastExcelAvailable = false;
-        return;
-      }
-      if (excelUnavailableCount > 0) {
-        output.info("Excel 恢复可见，取消关闭计数");
-      }
-      excelUnavailableCount = 0;
-      lastExcelAvailable = true;
+    // 初始化阶段仅观察状态，不执行关闭清理，避免与 Excel 启动/首次同步流程竞争
+    if (isInitializingExcel) {
       return;
     }
 
-    // 实在拿不到 PID 时，才退回到 COM 检测
-    output.warn("未记录 Excel PID，退回到 COM 可用性检测");
-    const check = await isExcelWithWorkbookRunning(workbookPath);
-    let available = check.running;
+    let expectedPid = stateManager.get("excelProcessId");
 
-    // 如果工作簿仍在运行，但所在进程与记录的不一致，说明工作簿已切换到其他 Excel 实例，视为不稳定状态
-    if (available && expectedPid && expectedPid > 0 && check.actualPid > 0 && check.actualPid !== expectedPid) {
-      output.warn(
-        `工作簿所在 Excel 实例发生变化：记录 PID=${expectedPid}，实际 PID=${check.actualPid}`
-      );
-      available = false;
+    // 未记录 PID 时，通过窗口标题反查（不使用 COM，避免导致 Excel 无法自然退出）
+    if (!expectedPid || expectedPid <= 0) {
+      const detectedPid = await findExcelProcessIdByWindow(workbookPath);
+      if (detectedPid > 0) {
+        await stateManager.set("excelProcessId", detectedPid);
+        output.info(`通过窗口标题检测到 Excel PID：${detectedPid}，后续使用 PID 检测`);
+      } else {
+        output.warn("未记录 Excel PID 且无法通过窗口标题反查，跳过本次关闭检测");
+      }
+      return;
     }
 
-    if (!available) {
+    // 优先只检查进程是否还存在，避免调用 COM
+    const alive = await isExcelProcessAlive(expectedPid);
+    if (alive !== lastExcelProcessAlive) {
+      lastExcelProcessAlive = alive;
+      output.info(`Excel 进程 ${expectedPid} 状态变化：${alive ? "ALIVE" : "DEAD"}`);
+    }
+    if (!alive) {
+      await handleExcelClosed();
+      return;
+    }
+
+    // 记录进程首次变为可用的时间，用于启动宽限期判断
+    if (excelFirstSeenAliveAt === 0) {
+      excelFirstSeenAliveAt = Date.now();
+      output.info(`Excel 进程 ${expectedPid} 首次可用，启动宽限期 ${EXCEL_STARTUP_GRACE_PERIOD_MS}ms`);
+    }
+
+    // 检查该 PID 下是否仍有 Excel 主窗口（可见或最小化均视为存在）
+    const hasWindow = await hasExcelMainWindow(expectedPid);
+    if (hasWindow !== lastExcelWindowVisible) {
+      lastExcelWindowVisible = hasWindow;
+      output.info(`Excel 进程 ${expectedPid} 主窗口变化：${hasWindow ? "PRESENT" : "ABSENT"}`);
+    }
+
+    if (!hasWindow) {
+      const inGracePeriod = (Date.now() - excelFirstSeenAliveAt) < EXCEL_STARTUP_GRACE_PERIOD_MS;
+      if (inGracePeriod) {
+        output.info(`Excel 进程 ${expectedPid} 主窗口尚未创建，处于启动宽限期，暂不清理`);
+        return;
+      }
       excelUnavailableCount++;
-      output.warn(`检测到 Excel 可能已关闭（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`);
+      output.warn(
+        `Excel 进程 ${expectedPid} 仍在运行，但已无主窗口（连续 ${excelUnavailableCount}/${EXCEL_UNAVAILABLE_THRESHOLD} 次）`
+      );
       if (excelUnavailableCount >= EXCEL_UNAVAILABLE_THRESHOLD) {
-        output.info("连续检测不到 Excel，执行关闭清理");
+        output.info("Excel 主窗口已关闭且进程无可见窗口，执行关闭清理");
         await handleExcelClosed();
         excelUnavailableCount = 0;
       }
-    } else {
-      if (excelUnavailableCount > 0) {
-        output.info("Excel 重新变为可用，取消关闭计数");
-      }
-      excelUnavailableCount = 0;
+      lastExcelAvailable = false;
+      return;
     }
-    lastExcelAvailable = available;
+
+    if (excelUnavailableCount > 0) {
+      output.info("Excel 主窗口恢复，取消关闭计数");
+    }
+    excelUnavailableCount = 0;
+    lastExcelAvailable = true;
   }, EXCEL_CHECK_INTERVAL_MS);
 }
 
@@ -1056,11 +1078,10 @@ try {
   }
 }
 
-/** 检查指定 PID 的 Excel 进程是否仍有可见窗口 */
-async function hasExcelVisibleWindow(pid: number): Promise<boolean> {
+/** 检查指定 PID 的 Excel 进程是否仍有主窗口（可见或最小化均视为存在，对话框不算） */
+async function hasExcelMainWindow(pid: number): Promise<boolean> {
   try {
     const result = await runPowerShell(`
-$ErrorActionPreference = "Stop"
 Add-Type @"
 using System;
 using System.Text;
@@ -1081,7 +1102,8 @@ public static class JrWindowChecker {
 "@
 $targetPid = ${pid}
 $found = $false
-$excelClassPattern = [regex]::new('^(XLMAIN|EXCEL|bosa_sdm_)', 'IgnoreCase')
+# 仅 XLMAIN/EXCEL 类为 Excel 主窗口；bosa_sdm_ 为对话框，不应视为 Excel 仍在使用
+$excelClassPattern = [regex]::new('^(XLMAIN|EXCEL)$', 'IgnoreCase')
 [JrWindowChecker]::EnumWindows({
   param($hWnd, $lParam)
   $isVisible = [JrWindowChecker]::IsWindowVisible($hWnd)
@@ -1099,113 +1121,58 @@ $excelClassPattern = [regex]::new('^(XLMAIN|EXCEL|bosa_sdm_)', 'IgnoreCase')
   }
   return $true
 }, [IntPtr]::Zero) | Out-Null
-if ($found) { Write-Output "VISIBLE" } else { Write-Output "HIDDEN" }
+if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
 `);
-    return result.success && (result.output || "").trim() === "VISIBLE";
+    return result.success && (result.output || "").trim() === "PRESENT";
   } catch {
     return false;
   }
 }
 
-/** 检查指定工作簿是否仍在 Excel 中打开，同时返回该工作簿所在 Excel 实例的 PID */
-async function isExcelWithWorkbookRunning(
-  workbookPath: string
-): Promise<{ running: boolean; actualPid: number; reason: string }> {
-  const defaultResult = { running: false, actualPid: 0, reason: "exception" };
+/** 通过窗口标题反查包含目标工作簿的 Excel 进程 ID（不使用 COM） */
+async function findExcelProcessIdByWindow(workbookPath: string): Promise<number> {
   try {
     const wbName = path.basename(workbookPath);
+    const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath));
     const script = `
-$ErrorActionPreference = "Stop"
-try {
-    Add-Type @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class Win32Check {
-        [DllImport(\"user32.dll\")]
-        public static extern bool IsWindow(IntPtr hWnd);
-        [DllImport(\"user32.dll\")]
-        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-    }
-"@
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $found = $null
-    foreach ($w in $excel.Workbooks) {
-        if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $w; break }
-    }
-    if ($found -eq $null) {
-        $payload = @{ running = $false; actualPid = 0; reason = "no-workbook" }
-        Write-Output (ConvertTo-Json $payload -Compress)
-        return
-    }
-    $hwnd = [IntPtr]::new([long]$excel.Hwnd)
-    if (-not [Win32Check]::IsWindow($hwnd)) {
-        $payload = @{ running = $false; actualPid = 0; reason = "invalid-hwnd" }
-        Write-Output (ConvertTo-Json $payload -Compress)
-        return
-    }
-    $pidValue = [uint32]0
-    [void][Win32Check]::GetWindowThreadProcessId($hwnd, [ref]$pidValue)
-    $runningPayload = @{ running = $true; actualPid = [int]$pidValue; reason = "ok" }
-    Write-Output (ConvertTo-Json $runningPayload -Compress)
-} catch {
-    $errPayload = @{ running = $false; actualPid = 0; reason = "exception" }
-    Write-Output (ConvertTo-Json $errPayload -Compress)
-}
-`;
-    const result = await runPowerShell(script);
-    if (result.success && result.output) {
-      try {
-        const parsed = JSON.parse(result.output.trim());
-        output.info(
-          `Excel 可用性检测：running=${parsed.running}, pid=${parsed.actualPid}, reason=${parsed.reason}`
-        );
-        return {
-          running: !!parsed.running,
-          actualPid: Number(parsed.actualPid) || 0,
-          reason: String(parsed.reason || "unknown"),
-        };
-      } catch {
-        output.warn(`Excel 可用性检测返回解析失败：${result.output}`);
-      }
-    }
-    return defaultResult;
-  } catch {
-    return defaultResult;
-  }
-}
-
-/** 获取当前包含目标工作簿的 Excel 进程 ID */
-async function getExcelProcessId(workbookPath: string): Promise<number> {
-  try {
-    const wbName = path.basename(workbookPath);
-    const script = `
-$ErrorActionPreference = "Stop"
 Add-Type @"
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
-public static class JrExcelPid {
+public static class JrExcelWindowFinder {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool IsIconic(IntPtr hWnd);
 }
 "@
-function Jr-GetExcelPid {
-  try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $found = $false
-    foreach ($w in $excel.Workbooks) {
-        if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break }
-    }
-    if (-not $found) { Write-Output "0"; return }
-    $pidValue = [uint32]0
-    $hwnd = $excel.Hwnd
-    $hwndPtr = [IntPtr]::new([long]$hwnd)
-    [void][JrExcelPid]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)
-    Write-Output $pidValue
-  } catch {
-    Write-Output "0"
+$targetName = '${escapePowerShellSingleQuoted(wbName)}'
+$targetNameNoExt = '${escapePowerShellSingleQuoted(wbNameNoExt)}'
+$foundPid = 0
+[JrExcelWindowFinder]::EnumWindows({
+  param($hWnd, $lParam)
+  $visible = [JrExcelWindowFinder]::IsWindowVisible($hWnd)
+  $iconic = [JrExcelWindowFinder]::IsIconic($hWnd)
+  if (-not $visible -and -not $iconic) { return $true }
+  $sb = New-Object System.Text.StringBuilder 512
+  [void][JrExcelWindowFinder]::GetWindowText($hWnd, $sb, 512)
+  $title = $sb.ToString()
+  if ($title -like "*$targetName*" -or $title -like "*$targetNameNoExt*") {
+    $pid = [uint32]0
+    [void][JrExcelWindowFinder]::GetWindowThreadProcessId($hWnd, [ref]$pid)
+    $foundPid = [int]$pid
+    return $false
   }
-}
-Jr-GetExcelPid
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+$foundPid
 `;
     const result = await runPowerShell(script);
     if (result.success && result.output) {
