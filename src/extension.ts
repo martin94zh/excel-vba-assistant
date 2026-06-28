@@ -179,7 +179,7 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
     output.info("恢复连接后开始自动执行 VBE → 本地 同步");
     await executeSync("vbe-to-local");
 
-    if (stateManager.get("serviceStatus") !== "synced") {
+    if (stateManager.getRuntime("serviceStatus") !== "synced") {
       output.warn("恢复连接时初始同步未完成，暂不启用自动同步");
       pushStateToWebview();
       return true;
@@ -414,7 +414,7 @@ async function handleSelectWorkbook(): Promise<void> {
           return;
         }
       }
-      if (stateManager.get("serviceStatus") !== "synced") {
+      if (stateManager.getRuntime("serviceStatus") !== "synced") {
         output.warn("初始同步未完成，暂不启用自动同步");
         return;
       }
