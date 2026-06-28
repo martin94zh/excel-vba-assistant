@@ -9,3 +9,4 @@ dist/mcp-server.js
 !dist/extension.js
 test-sync.ps1
 tools/
+.trae/**
