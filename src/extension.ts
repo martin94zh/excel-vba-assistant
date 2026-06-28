@@ -1056,6 +1056,8 @@ public static class JrWindowChecker {
   [DllImport("user32.dll")]
   public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")]
+  public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
@@ -1066,7 +1068,9 @@ $found = $false
 $excelClassPattern = [regex]::new('^(XLMAIN|EXCEL|bosa_sdm_)', 'IgnoreCase')
 [JrWindowChecker]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrWindowChecker]::IsWindowVisible($hWnd)) { return $true }
+  $isVisible = [JrWindowChecker]::IsWindowVisible($hWnd)
+  $isIconic = [JrWindowChecker]::IsIconic($hWnd)
+  if (-not $isVisible -and -not $isIconic) { return $true }
   $winPid = [uint32]0
   [void][JrWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
   if ($winPid -ne $targetPid) { return $true }
