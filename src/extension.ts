@@ -1184,6 +1184,108 @@ $foundPid
   return 0;
 }
 
+/**
+ * 终止残留的 Excel 进程。
+ * 工作簿已关闭但 Excel 进程可能仍在（COM 引用未完全释放或 Excel 空闲驻留），
+ * 此函数通过 COM 检查该实例是否还有其他工作簿：
+ * - Workbooks.Count > 0 → 用户可能还在用其他工作簿，不终止
+ * - Workbooks.Count == 0 → 无工作簿，安全终止
+ * - COM 不可获取 → 用窗口检查二次确认：无可见窗口才终止（避免 Excel 忙时误杀）
+ */
+async function terminateResidualExcelProcess(pid: number): Promise<void> {
+  const alive = await isExcelProcessAlive(pid);
+  if (!alive) {
+    output.info(`Excel 进程 ${pid} 已自然退出，无需释放`);
+    return;
+  }
+  // 通过 COM 检查该 Excel 实例是否还有其他工作簿打开
+  const comResult = await checkWorkbooksCount(pid);
+  if (comResult === "has-workbooks") {
+    output.info(`Excel 进程 ${pid} 仍有其他工作簿打开，不终止进程`);
+    return;
+  }
+  if (comResult === "com-failed") {
+    // COM 调用失败，可能是 Excel 忙或已关闭。用窗口检查二次确认
+    const hasWindow = await hasAnyProcessWindow(pid);
+    if (hasWindow) {
+      output.info(`Excel 进程 ${pid} COM 不可获取但有可见窗口（可能正忙），不终止进程`);
+      return;
+    }
+    output.info(`Excel 进程 ${pid} COM 不可获取且无可见窗口，确认为残留进程`);
+  } else {
+    output.info(`Excel 进程 ${pid} 无工作簿打开，确认为残留进程`);
+  }
+  // 安全终止残留进程
+  try {
+    const result = await runPowerShell(`Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue`, 5000);
+    if (result.success) {
+      output.info(`已终止残留 Excel 进程 ${pid}`);
+    } else {
+      output.warn(`终止残留 Excel 进程 ${pid} 失败：${result.message}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`终止残留 Excel 进程 ${pid} 异常：${msg}`);
+  }
+}
+
+/**
+ * 通过 COM 检查指定 PID 的 Excel 实例的工作簿数量。
+ * 返回值：
+ * - "has-workbooks"：Workbooks.Count > 0
+ * - "no-workbooks"：Workbooks.Count == 0
+ * - "com-failed"：COM 调用失败（Excel 忙或已关闭）
+ */
+async function checkWorkbooksCount(pid: number): Promise<"has-workbooks" | "no-workbooks" | "com-failed"> {
+  try {
+    const result = await runPowerShell(`
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class JrPidCheck {
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+}
+"@
+$excel = $null
+try {
+    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    # 校验 COM 实例的 PID 是否匹配
+    $hwnd = $excel.Hwnd
+    $actualPid = [uint32]0
+    [void][JrPidCheck]::GetWindowThreadProcessId($hwnd, [ref]$actualPid)
+    if ($actualPid -ne ${pid}) {
+        Write-Output "COM_FAILED"
+        exit
+    }
+    $count = $excel.Workbooks.Count
+    if ($count -gt 0) {
+        Write-Output "HAS_WORKBOOKS"
+    } else {
+        Write-Output "NO_WORKBOOKS"
+    }
+} catch {
+    Write-Output "COM_FAILED"
+} finally {
+    if ($excel -ne $null) {
+        [void][System.Runtime.Interopservices.Marshal]::FinalReleaseComObject($excel)
+        $excel = $null
+    }
+    [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+}
+`, 8000);
+    if (!result.success) return "com-failed";
+    const output = (result.output || "").trim();
+    if (output === "HAS_WORKBOOKS") return "has-workbooks";
+    if (output === "NO_WORKBOOKS") return "no-workbooks";
+    return "com-failed";
+  } catch {
+    return "com-failed";
+  }
+}
+
 /** Excel 关闭后的清理：删除自动创建的同步目录，清空相关状态 */
 async function handleExcelClosed(): Promise<void> {
   // 第一步：立即停止检测器，避免清理过程中再次触发检测
@@ -1192,6 +1294,12 @@ async function handleExcelClosed(): Promise<void> {
   // 取消 Excel 窗口置顶，恢复正常状态
   if (stateManager.get("keepExcelOnTop")) {
     await restoreExcelWindowState();
+  }
+
+  // 释放残留的 Excel 进程：工作簿已关闭但进程可能仍在，终止它避免后续 COM 调用取到僵尸实例
+  const residualPid = stateManager.get("excelProcessId");
+  if (residualPid > 0) {
+    await terminateResidualExcelProcess(residualPid);
   }
 
   const syncDir = stateManager.get("syncDirectory");
