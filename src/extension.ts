@@ -991,7 +991,9 @@ try {
     Write-Output "DEAD"
 }
 `);
-    return result.success && (result.output || "").trim() === "ALIVE";
+    const alive = result.success && (result.output || "").trim() === "ALIVE";
+    output.info(`Excel 进程 ${pid} 存活检测：${alive ? "ALIVE" : "DEAD"} (success=${result.success})`);
+    return alive;
   } catch {
     return false;
   }
@@ -1004,18 +1006,31 @@ async function isExcelWithWorkbookRunning(workbookPath: string): Promise<boolean
     const script = `
 $ErrorActionPreference = "Stop"
 try {
+    Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class Win32Check {
+        [DllImport(\"user32.dll\")]
+        public static extern bool IsWindow(IntPtr hWnd);
+    }
+"@
     $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
     $found = $false
     foreach ($w in $excel.Workbooks) {
         if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break }
     }
-    if ($found) { Write-Output "RUNNING" } else { Write-Output "CLOSED" }
+    if (-not $found) { Write-Output "CLOSED:no-workbook"; return }
+    $hwnd = [IntPtr]::new([long]$excel.Hwnd)
+    if (-not [Win32Check]::IsWindow($hwnd)) { Write-Output "CLOSED:invalid-hwnd"; return }
+    Write-Output "RUNNING"
 } catch {
-    Write-Output "CLOSED"
+    Write-Output "CLOSED:exception"
 }
 `;
     const result = await runPowerShell(script);
-    return result.success && (result.output || "").trim() === "RUNNING";
+    const checkOutput = (result.output || "").trim();
+    output.info(`Excel 可用性检测结果：${checkOutput} (success=${result.success})`);
+    return result.success && checkOutput === "RUNNING";
   } catch {
     return false;
   }
@@ -1043,7 +1058,7 @@ function Jr-GetExcelPid {
         if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break }
     }
     if (-not $found) { Write-Output "0"; return }
-    $pidValue = 0
+    $pidValue = [uint32]0
     $hwnd = $excel.Hwnd
     $hwndPtr = [IntPtr]::new([long]$hwnd)
     [void][JrExcelPid]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)

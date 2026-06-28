@@ -153,7 +153,7 @@ function Jr-OpenWorkbook {
         $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(absPath)}')
     }
     $excel.Visible = $true
-    $pidValue = 0
+    $pidValue = [uint32]0
     $hwnd = $excel.Hwnd
     $hwndPtr = [IntPtr]::new([long]$hwnd)
     [void][JrExcelPid]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)
@@ -1342,6 +1342,10 @@ try {
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         [DllImport(\"user32.dll\", SetLastError = true)]
         public static extern bool IsWindow(IntPtr hWnd);
+        [DllImport(\"user32.dll\", SetLastError = true)]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport(\"user32.dll\", SetLastError = true)]
+        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     }
 "@
 
@@ -1360,14 +1364,21 @@ try {
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
     $SWP_NOMOVE = 0x0002
     $SWP_NOSIZE = 0x0001
+    $SWP_SHOWWINDOW = 0x0040
+
+    # 先激活窗口，确保置顶命令生效
+    [void][Win32TopMost]::ShowWindowAsync($hwnd, 1) # SW_SHOWNORMAL
+    [void][Win32TopMost]::SetForegroundWindow($hwnd)
+    Start-Sleep -Milliseconds 100
 
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $result = [Win32TopMost]::SetWindowPos($hwnd, $target, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE)
+    $flags = $SWP_NOMOVE -bor $SWP_NOSIZE -bor $SWP_SHOWWINDOW
+    $result = [Win32TopMost]::SetWindowPos($hwnd, $target, 0, 0, 0, 0, $flags)
     if (-not $result) {
         $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        throw "SetWindowPos 调用失败，错误码：$err"
+        throw "SetWindowPos 调用失败，错误码：$err，HWND：$hwnd"
     }
-    Write-Output "Excel 窗口已${action}"
+    Write-Output "Excel 窗口已${action} (HWND=$hwnd)"
 } catch {
     $errMsg = [string]$_.Exception.Message
     $errStack = [string]$_.ScriptStackTrace
