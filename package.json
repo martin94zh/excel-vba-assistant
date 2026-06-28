@@ -2,7 +2,7 @@
   "name": "excel-vba-assistant",
   "displayName": "Excel VBA Assistant",
   "description": "Excel VBA 本地同步器 + AI 编程桥接器：在 Trae/VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "excel-vba-assistant",
   "license": "MIT",
   "icon": "resources/plugin-icon.png",
@@ -105,6 +105,10 @@
       {
         "command": "excelVba.refreshResources",
         "title": "Excel VBA: 刷新资源"
+      },
+      {
+        "command": "excelVba.syncSkills",
+        "title": "Excel VBA: 同步 Skill 到工作区"
       }
     ],
     "configuration": {

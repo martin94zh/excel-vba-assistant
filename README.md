@@ -4,7 +4,7 @@ Excel VBA 本地同步器 + AI 编程桥接器：在 Trae / VS Code 中管理、
 
 通过 PowerShell 调用 Excel COM Automation 操作已打开的工作簿，实现 VBAProject 的读写、双向同步、宏执行、单元格操作与弹窗处理，并内置 MCP Server 让 AI 直接调用 Excel/VBA 工具。
 
-> 当前版本：**v0.7.1**
+> 当前版本：**v0.7.2**
 
 ---
 
@@ -70,7 +70,7 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 ### 方式 A：从 .vsix 安装
 
-1. 下载 `excel-vba-assistant-0.7.1.vsix`
+1. 下载 `excel-vba-assistant-0.7.2.vsix`
 2. 在 Trae / VS Code 中执行 `Extensions: Install from VSIX...`
 3. 选择该文件安装
 
@@ -290,7 +290,7 @@ MCP Server 已打包为 `dist/mcp-server.exe`，内置 Node.js 运行时。用�
 
 ### 为什么之前版本需要 Node.js？
 
-早期版本使用 `node dist/mcp-server.js` 启动 MCP Server，因此依赖用户本机 Node.js。v0.7.1 起改用 `pkg` 打包为独立可执行文件，不再依赖外部 Node.js。
+早期版本使用 `node dist/mcp-server.js` 启动 MCP Server，因此依赖用户本机 Node.js。v0.7.2 起改用 `pkg` 打包为独立可执行文件，不再依赖外部 Node.js。
 
 ### 安装插件后 MCP 就可用吗？
 
@@ -491,12 +491,18 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ```powershell
 npm run package
-# 生成 excel-vba-assistant-0.7.1.vsix
+# 生成 excel-vba-assistant-0.7.2.vsix
 ```
 
 ### 查看日志
 
 命令面板 → `Excel VBA: 打开输出日志`，会打开 `Excel VBA Assistant` 输出通道，显示同步、宏执行、错误等详情。
+
+### Skill 同步
+
+插件内置的 Skill 文档默认不会自动进入 Trae 的 Skill 系统。插件激活时，会自动把内置 Skill 同步到当前工作区的 `.trae/skills/excel-vba-assistant/` 目录；你也可以手动执行命令面板 → `Excel VBA: 同步 Skill 到工作区`。
+
+同步后，Trae AI 会在相关任务中按需加载这些 Skill，从而正确调用超级表、页签格式等新工具。
 
 ---
 

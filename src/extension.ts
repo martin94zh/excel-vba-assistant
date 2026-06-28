@@ -97,6 +97,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // 插件激活时立即写入基础 MCP 配置；选择 Excel 文件/目录后会再次更新
   void writeMcpConfig();
 
+  // 将内置 Skill 同步到当前工作区的 .trae/skills，使 Trae AI 能按需加载
+  void syncBuiltinSkillsToWorkspace();
+
   // 恢复时若已保存 workbookPath，自动检测 Excel 连接状态，避免面板显示「未知」
   // 检测器在恢复成功后启动，防止恢复完成前误触发清理
   void restoreExcelConnectionStatus().then(() => {
@@ -235,6 +238,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   register("excelVba.runMacro", () => void handleRunMacro());
   register("excelVba.openOutput", () => output.show(false));
   register("excelVba.refreshResources", () => void handleRefreshResources());
+  register("excelVba.syncSkills", () => void syncBuiltinSkillsToWorkspace(true));
 }
 
 // ============================================================
@@ -1619,4 +1623,61 @@ async function removeMcpServerConfig(uri: vscode.Uri, name: string): Promise<voi
   delete json.mcpServers[name];
   const content = JSON.stringify(json, null, 2);
   await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
+}
+
+/** 将插件内置的 skills 目录同步到当前工作区的 .trae/skills/excel-vba-assistant/，让 Trae AI 按需加载 */
+async function syncBuiltinSkillsToWorkspace(showMessage = false): Promise<void> {
+  if (!extensionContext) return;
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    if (showMessage) {
+      void vscode.window.showWarningMessage("未打开工作区，无法同步 Skill。");
+    }
+    return;
+  }
+
+  const sourceDir = path.join(extensionContext.extensionPath, "skills");
+  if (!fs.existsSync(sourceDir)) {
+    if (showMessage) {
+      void vscode.window.showWarningMessage("插件内置 Skill 目录不存在。");
+    }
+    return;
+  }
+
+  let totalCopied = 0;
+  for (const wf of workspaceFolders) {
+    const targetDir = path.join(wf.uri.fsPath, ".trae", "skills", "excel-vba-assistant");
+    try {
+      await mkdir(targetDir, { recursive: true });
+      const files = await readdir(sourceDir);
+      for (const file of files) {
+        const src = path.join(sourceDir, file);
+        const stat = fs.statSync(src);
+        if (!stat.isFile()) continue;
+        const dest = path.join(targetDir, file);
+        let shouldCopy = true;
+        if (fs.existsSync(dest)) {
+          const destStat = fs.statSync(dest);
+          // 仅当内置文件更新时才覆盖，避免覆盖用户自定义内容
+          shouldCopy = stat.mtime > destStat.mtime;
+        }
+        if (shouldCopy) {
+          fs.copyFileSync(src, dest);
+          totalCopied++;
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      output.warn(`同步 Skill 到工作区失败：${msg}`);
+      if (showMessage) {
+        void vscode.window.showErrorMessage(`同步 Skill 失败：${msg}`);
+      }
+      return;
+    }
+  }
+
+  output.info(`已同步 ${totalCopied} 个 Skill 文件到 .trae/skills/excel-vba-assistant/`);
+  if (showMessage) {
+    void vscode.window.showInformationMessage(`已同步 ${totalCopied} 个 Skill 文件到当前工作区。`);
+  }
 }
