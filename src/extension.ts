@@ -1106,53 +1106,60 @@ async function isWorkbookOpenInProcess(pid: number, workbookPath: string): Promi
   const wbName = path.basename(workbookPath);
   const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath));
   try {
+    // 所有 EnumWindows 逻辑在 C# 静态方法中完成，避免 PowerShell ScriptBlock 作用域问题
+    // （Lessons Learned: PowerShell EnumWindows callback has variable scoping issues）
     const result = await runPowerShell(`
 Add-Type @"
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
 public static class JrWorkbookWindowChecker {
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")]
-  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
   [DllImport("user32.dll")]
-  public static extern bool IsWindow(IntPtr hWnd);
+  private static extern bool IsWindow(IntPtr hWnd);
   [DllImport("user32.dll")]
-  public static extern bool IsWindowVisible(IntPtr hWnd);
+  private static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll")]
-  public static extern bool IsIconic(IntPtr hWnd);
+  private static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
   [DllImport("user32.dll")]
-  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+  public static bool IsWorkbookOpen(int targetPid, string wbName, string wbNameNoExt) {
+    bool found = false;
+    EnumWindows((hWnd, lParam) => {
+      if (!IsWindow(hWnd)) return true;
+      // 必须是可见窗口或最小化窗口（排除隐藏的辅助窗口）
+      bool visible = IsWindowVisible(hWnd);
+      bool iconic = IsIconic(hWnd);
+      if (!visible && !iconic) return true;
+      // 校验窗口属于目标进程
+      uint winPid;
+      GetWindowThreadProcessId(hWnd, out winPid);
+      if (winPid != (uint)targetPid) return true;
+      // 检查窗口标题是否包含工作簿名称（不区分大小写，兼容已保存/未保存/兼容模式等标题）
+      StringBuilder sb = new StringBuilder(512);
+      GetWindowText(hWnd, sb, 512);
+      string title = sb.ToString();
+      if (title.IndexOf(wbName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+          title.IndexOf(wbNameNoExt, StringComparison.OrdinalIgnoreCase) >= 0) {
+        found = true;
+        return false; // 停止枚举
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
 }
 "@
 $targetPid = ${pid}
 $wbName = '${escapePowerShellSingleQuoted(wbName)}'
 $wbNameNoExt = '${escapePowerShellSingleQuoted(wbNameNoExt)}'
-$found = $false
-[JrWorkbookWindowChecker]::EnumWindows({
-  param($hWnd, $lParam)
-  if (-not [JrWorkbookWindowChecker]::IsWindow($hWnd)) { return $true }
-  # 必须是可见窗口或最小化窗口（排除隐藏的辅助窗口）
-  $visible = [JrWorkbookWindowChecker]::IsWindowVisible($hWnd)
-  $iconic = [JrWorkbookWindowChecker]::IsIconic($hWnd)
-  if (-not $visible -and -not $iconic) { return $true }
-  # 校验窗口属于目标进程
-  $winPid = [uint32]0
-  [void][JrWorkbookWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
-  if ($winPid -ne $targetPid) { return $true }
-  # 检查窗口标题是否包含工作簿名称（兼容已保存/未保存/兼容模式等标题）
-  $sb = New-Object System.Text.StringBuilder 512
-  [void][JrWorkbookWindowChecker]::GetWindowText($hWnd, $sb, 512)
-  $title = $sb.ToString()
-  if ($title -like "*$wbName*" -or $title -like "*$wbNameNoExt*") {
-    $found = $true
-    return $false
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
+$result = [JrWorkbookWindowChecker]::IsWorkbookOpen($targetPid, $wbName, $wbNameNoExt)
+if ($result) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
 `, 8000);
     return result.success && (result.output || "").trim() === "PRESENT";
   } catch {
