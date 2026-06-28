@@ -69,7 +69,7 @@ export class StatusBarManager {
     lines.push(`- 服务状态：${this.statusLabel(status)}`);
     lines.push(`- 上次同步方向：${state.lastSyncDirection === "vbe-to-local" ? "VBE → 本地" : state.lastSyncDirection === "local-to-vbe" ? "本地 → VBE" : "无"}`);
     lines.push(`- 上次同步时间：${this.formatSyncTime(state.lastSyncAt)}`);
-    lines.push(`- 错误数：${state.errorCount}`);
+    lines.push(`- 最近错误：${state.lastError || "无"}`);
     lines.push(`- 警告数：${state.warningCount}`);
     const md = new vscode.MarkdownString(lines.join("\n"));
     md.supportThemeIcons = true;

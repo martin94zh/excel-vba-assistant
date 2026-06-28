@@ -49,6 +49,8 @@ let isSyncingVbeToLocal = false;
 let lastExcelAvailable = false;
 let excelUnavailableCount = 0;
 const EXCEL_UNAVAILABLE_THRESHOLD = 2;
+let lastExcelProcessAlive = false;
+let lastExcelWindowVisible = false;
 
 // 自动同步变更队列：记录本地和 VBE 的修改事件，按时间顺序处理
 let pendingChanges: PendingChange[] = [];
@@ -135,7 +137,7 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
     excelPid = await getExcelProcessId(workbookPath);
   }
   if (accessError) {
-    stateManager.setRuntime({ serviceStatus: "error" });
+    stateManager.setRuntime({ lastError: accessError, serviceStatus: "error" });
     output.warn(`恢复连接状态时检测到错误：${accessError}`);
     // 服务未连接时，强制关闭自动同步和自动执行 VBA
     await stateManager.set("autoSync", false);
@@ -367,7 +369,7 @@ async function handleSelectWorkbook(): Promise<void> {
 
     if (accessError) {
       output.error(accessError);
-      stateManager.setRuntime({ serviceStatus: "error" });
+      stateManager.setRuntime({ lastError: accessError, serviceStatus: "error" });
       vscode.window.showErrorMessage(accessError);
     } else {
       stateManager.setRuntime({ serviceStatus: "connected" });
@@ -497,7 +499,7 @@ async function handleDisconnectExcel(): Promise<void> {
     serviceStatus: "disconnected",
     lastSyncDirection: undefined,
     lastSyncAt: undefined,
-    errorCount: 0,
+    lastError: undefined,
     warningCount: 0,
     isSyncing: false,
   });
@@ -752,7 +754,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
         await applyExcelOnTopIfNeeded();
       }
     } else {
-      stateManager.setRuntime({ errorCount: stateManager.getAll().errorCount + 1, serviceStatus: "error" });
+      stateManager.setRuntime({ lastError: result.message, serviceStatus: "error" });
       output.error(result.message);
       if (result.output) output.log(result.output);
       output.show(true);
@@ -760,7 +762,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    stateManager.setRuntime({ serviceStatus: "error" });
+    stateManager.setRuntime({ lastError: `同步异常：${msg}`, serviceStatus: "error" });
     output.error(`同步异常：${msg}`);
     vscode.window.showErrorMessage(`同步失败：${msg}`);
   } finally {
@@ -929,11 +931,13 @@ function stopFileWatcher(): void {
 // Excel 关闭检测（需求 3）
 // ============================================================
 
-const EXCEL_CHECK_INTERVAL_MS = 5000;
+const EXCEL_CHECK_INTERVAL_MS = 2000;
 
 function startExcelCloseWatcher(): void {
   stopExcelCloseWatcher();
   excelUnavailableCount = 0;
+  lastExcelProcessAlive = false;
+  lastExcelWindowVisible = false;
   excelCheckTimer = setInterval(async () => {
     const workbookPath = stateManager.get("workbookPath");
     if (!workbookPath) {
@@ -946,13 +950,20 @@ function startExcelCloseWatcher(): void {
     // 如果记录了 PID，优先只检查进程是否还存在，避免频繁调用 COM 导致 Excel 进程无法自然退出
     if (expectedPid && expectedPid > 0) {
       const alive = await isExcelProcessAlive(expectedPid);
+      if (alive !== lastExcelProcessAlive) {
+        lastExcelProcessAlive = alive;
+        output.info(`Excel 进程 ${expectedPid} 状态变化：${alive ? "ALIVE" : "DEAD"}`);
+      }
       if (!alive) {
-        output.info(`检测到 Excel 进程 ${expectedPid} 已终止，执行关闭清理`);
         await handleExcelClosed();
         return;
       }
       // 进程还在时，进一步检查是否仍有可见窗口；部分场景 Excel 窗口已关闭但进程残留
       const hasWindow = await hasExcelVisibleWindow(expectedPid);
+      if (hasWindow !== lastExcelWindowVisible) {
+        lastExcelWindowVisible = hasWindow;
+        output.info(`Excel 进程 ${expectedPid} 窗口可见性变化：${hasWindow ? "VISIBLE" : "HIDDEN"}`);
+      }
       if (!hasWindow) {
         excelUnavailableCount++;
         output.warn(
@@ -1206,7 +1217,7 @@ async function handleExcelClosed(): Promise<void> {
   // 如果目录删除失败（通常是因为仍被占用），保留状态，避免误清空
   if (!removed) {
     output.warn("Excel 关闭后同步目录删除失败，保留当前状态等待用户处理");
-    stateManager.setRuntime({ serviceStatus: "error" });
+    stateManager.setRuntime({ lastError: "同步目录删除失败，保留当前状态等待用户处理", serviceStatus: "error" });
     pushStateToWebview();
     return;
   }
@@ -1267,13 +1278,13 @@ async function syncLocalToVbeQuiet(skipQueue = false): Promise<void> {
 
       // 注意：自动同步不触发运行宏弹窗，避免打断用户编辑
     } else {
-      stateManager.setRuntime({ errorCount: stateManager.getAll().errorCount + 1, serviceStatus: "error" });
+      stateManager.setRuntime({ lastError: `自动同步失败：${result.message}`, serviceStatus: "error" });
       output.error(`自动同步失败：${result.message}`);
       if (result.output) output.log(result.output);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    stateManager.setRuntime({ serviceStatus: "error" });
+    stateManager.setRuntime({ lastError: `自动同步异常：${msg}`, serviceStatus: "error" });
     output.error(`自动同步异常：${msg}`);
   } finally {
     isSyncing = false;
@@ -1347,13 +1358,13 @@ async function syncVbeToLocalQuiet(skipQueue = false): Promise<void> {
       if (result.output) output.log(result.output);
       await applyExcelOnTopIfNeeded();
     } else {
-      stateManager.setRuntime({ errorCount: stateManager.getAll().errorCount + 1, serviceStatus: "error" });
+      stateManager.setRuntime({ lastError: `自动同步失败：${result.message}`, serviceStatus: "error" });
       output.error(`自动同步失败：${result.message}`);
       if (result.output) output.log(result.output);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    stateManager.setRuntime({ serviceStatus: "error" });
+    stateManager.setRuntime({ lastError: `自动同步异常：${msg}`, serviceStatus: "error" });
     output.error(`自动同步异常：${msg}`);
   } finally {
     // 延迟释放标志，给文件系统 watcher 一段缓冲期，避免本次写入触发本地 → VBE 同步
@@ -1460,7 +1471,7 @@ function pushStateToWebview(): void {
     autoSync: state.autoSync,
     keepExcelOnTop: state.keepExcelOnTop,
     serviceStatus: state.serviceStatus,
-    errorCount: state.errorCount,
+    lastError: state.lastError,
     warningCount: state.warningCount,
   };
   viewProvider.postState(payload);

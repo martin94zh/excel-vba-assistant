@@ -22,7 +22,7 @@ export interface ExcelVbaPluginState {
   serviceStatus: ServiceStatus;
   lastSyncDirection?: SyncDirection;
   lastSyncAt?: string;
-  errorCount: number;
+  lastError?: string;
   warningCount: number;
   isSyncing: boolean;
 }
@@ -38,7 +38,7 @@ const DEFAULTS: ExcelVbaPluginState = {
   keepExcelOnTop: false,
   excelProcessId: 0,
   serviceStatus: "unknown",
-  errorCount: 0,
+  lastError: undefined,
   warningCount: 0,
   isSyncing: false,
 };
@@ -90,7 +90,7 @@ export class StateManager {
       serviceStatus: this.getRuntime("serviceStatus") ?? DEFAULTS.serviceStatus,
       lastSyncDirection: this.getRuntime("lastSyncDirection"),
       lastSyncAt: this.getRuntime("lastSyncAt"),
-      errorCount: this.getRuntime("errorCount") ?? DEFAULTS.errorCount,
+      lastError: this.getRuntime("lastError") ?? DEFAULTS.lastError,
       warningCount: this.getRuntime("warningCount") ?? DEFAULTS.warningCount,
       isSyncing: this.getRuntime("isSyncing") ?? DEFAULTS.isSyncing,
     };

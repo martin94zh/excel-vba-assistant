@@ -28,7 +28,7 @@ export interface StatePayload {
   autoSync: boolean;
   keepExcelOnTop: boolean;
   serviceStatus: string;
-  errorCount: number;
+  lastError?: string;
   warningCount: number;
 }
 
@@ -37,7 +37,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 
   private view?: vscode.WebviewView;
   private onCommand: (msg: WebviewMessage) => void;
-  private version = "0.6.3";
+  private version = "0.6.4";
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -105,7 +105,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
     const autoSync = state.autoSync;
     const keepExcelOnTop = state.keepExcelOnTop;
     const serviceStatus = state.serviceStatus;
-    const errorCount = state.errorCount;
+    const lastError = state.lastError;
     const warningCount = state.warningCount;
 
     const statusLabel: Record<string, string> = {
@@ -409,8 +409,8 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
   <div class="notice-line">仅限内部使用，请勿外传</div>
   <div class="status-row">
     <span>服务状态：</span>
-    <span class="badge ${statusBadgeClass}">${statusText}</span>
-    ${errorCount > 0 ? `<span class="badge badge-err">错误 ${errorCount}</span>` : ""}
+    <span id="serviceStatusBadge" class="badge ${statusBadgeClass}">${statusText}</span>
+    <span id="errorBadge" class="badge badge-err" style="${lastError ? '' : 'display:none;'}" title="${(lastError || '').replace(/"/g, '&quot;')}">${lastError ? (lastError.length > 10 ? lastError.slice(0, 10) + "…" : lastError) : ""}</span>
     ${warningCount > 0 ? `<span class="badge badge-warn">警告 ${warningCount}</span>` : ""}
   </div>
 </div>
@@ -512,6 +512,40 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
       if (autoRun) autoRun.checked = !!s.autoRunVba;
       if (autoSync) autoSync.checked = !!s.autoSync;
       if (keepOnTop) keepOnTop.checked = !!s.keepExcelOnTop;
+
+      // 更新服务状态与错误提示
+      const statusLabel = {
+        unknown: "未知",
+        starting: "启动中",
+        connected: "已连接（未同步）",
+        syncing: "同步中",
+        synced: "已同步",
+        disconnected: "未连接",
+        error: "错误",
+      };
+      const statusText = statusLabel[s.serviceStatus] || "未知";
+      const statusBadgeClass =
+        s.serviceStatus === "synced" ? "badge-ok" :
+        s.serviceStatus === "connected" ? "badge-warn" :
+        s.serviceStatus === "error" ? "badge-err" :
+        s.serviceStatus === "disconnected" ? "badge-warn" :
+        s.serviceStatus === "syncing" ? "badge-info" : "badge-info";
+      const statusBadge = document.getElementById('serviceStatusBadge');
+      if (statusBadge) {
+        statusBadge.textContent = statusText;
+        statusBadge.className = "badge " + statusBadgeClass;
+      }
+      const errorBadge = document.getElementById('errorBadge');
+      if (errorBadge) {
+        if (s.lastError) {
+          errorBadge.textContent = s.lastError.length > 10 ? s.lastError.slice(0, 10) + "…" : s.lastError;
+          errorBadge.title = s.lastError;
+          errorBadge.className = "badge badge-err";
+          errorBadge.style.display = "";
+        } else {
+          errorBadge.style.display = "none";
+        }
+      }
     }
   });
 </script>
