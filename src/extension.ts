@@ -80,6 +80,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   output.info("Excel VBA Assistant 已激活");
 
+  // 自动设置文件图标主题为 Excel VBA Icons（若用户已选择其他主题则不覆盖）
+  void setExcelVbaIconTheme();
+
   // 自动同步开关已开启时，启动双向自动同步
   if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
     startFileWatcher();
@@ -1418,6 +1421,21 @@ async function removeMcpConfig(): Promise<void> {
     try {
       await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
     } catch { /* ignore */ }
+  }
+}
+
+async function setExcelVbaIconTheme(): Promise<void> {
+  try {
+    const config = vscode.workspace.getConfiguration("workbench");
+    const current = config.get<string>("iconTheme");
+    // 仅在用户未设置任何图标主题时自动应用，避免覆盖用户已有偏好
+    if (!current || current === "vs-seti" || current === "vs-minimal") {
+      await config.update("iconTheme", "excelVbaIcons", true);
+      output.info("已自动设置文件图标主题为 Excel VBA Icons");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`自动设置图标主题失败：${msg}`);
   }
 }
 
