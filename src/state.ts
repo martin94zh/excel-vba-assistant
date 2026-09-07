@@ -1,8 +1,7 @@
 /**
  * Excel VBA Assistant - 状态管理
  *
- * 所有用户配置通过 globalState 存储，不走 JSON 文件，
- * 与任务文档中的 ExcelVbaPluginState 模型对齐。
+ * 所有用户配置通过 globalState 存储，不走 JSON 文件。
  */
 import * as vscode from "vscode";
 

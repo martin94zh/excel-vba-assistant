@@ -1,12 +1,10 @@
-/**
+﻿/**
  * Excel VBA Assistant - PowerShell 运行时
  *
  * 通过生成 PowerShell 脚本调用 Excel COM Automation，
  * 实现对已打开 Excel 工作簿 / VBAProject 的读写操作。
  *
- * 该模块是本地服务层的替代实现：
- * 任务文档中描述的 C# .NET + ASP.NET Core 服务在本版本中以
- * TypeScript + PowerShell COM 的方式实现，架构更轻量、无需额外进程。
+ * 使用 TypeScript + PowerShell COM 方式实现，架构轻量、无需额外服务进程。
  */
 import { exec } from "child_process";
 import { randomBytes } from "crypto";
@@ -143,7 +141,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 
-public static class JrExcelAttach {
+public static class ExcelComUtils {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
   [DllImport("user32.dll")]
@@ -165,14 +163,14 @@ public static class JrExcelAttach {
 }
 "@
 
-[JrExcelAttach]::EnumWindows({
+[ExcelComUtils]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrExcelAttach]::IsWindowVisible($hWnd)) { return $true }
+  if (-not [ExcelComUtils]::IsWindowVisible($hWnd)) { return $true }
   $winPid = [uint32]0
-  [void][JrExcelAttach]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  [void][ExcelComUtils]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
   if ($winPid -ne $targetPid) { return $true }
   $sb = New-Object System.Text.StringBuilder 256
-  [void][JrExcelAttach]::GetClassName($hWnd, $sb, $sb.Capacity)
+  [void][ExcelComUtils]::GetClassName($hWnd, $sb, $sb.Capacity)
   if ($sb.ToString() -eq "XLMAIN") { $script:foundHwnd = $hWnd; return $false }
   return $true
 }, [IntPtr]::Zero) | Out-Null
@@ -181,7 +179,7 @@ $excel = $null
 if ($foundHwnd -ne [IntPtr]::Zero) {
   $guid = [Guid]::Parse("00020400-0000-0000-C000-000000000046")
   $obj = $null
-  $hr = [JrExcelAttach]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
+  $hr = [ExcelComUtils]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
   if ($hr -eq 0) {
     $excel = $obj.Application
   } else {
@@ -230,3 +228,4 @@ try {
   }
   return null;
 }
+

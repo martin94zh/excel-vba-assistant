@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Excel VBA Assistant - VBA 客户端
  *
  * 通过 PowerShell 调用 Excel COM Automation 操作已打开的工作簿，
@@ -133,12 +133,12 @@ $ErrorActionPreference = "Stop"
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public static class JrExcelPid {
+public static class ExcelPidHelper {
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 }
 "@
-function Jr-OpenWorkbook {
+function Open-ExcelWorkbook {
   try {
     $excel = $null
     $started = $false
@@ -160,7 +160,7 @@ function Jr-OpenWorkbook {
     $pidValue = 0
     $hwnd = $excel.Hwnd
     $hwndPtr = [IntPtr]::new([long]$hwnd)
-    [void][JrExcelPid]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)
+    [void][ExcelPidHelper]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)
     $payload = @{ success = $true; workbookName = '${escapePowerShellSingleQuoted(wbName)}'; startedExcel = $started; message = "已在 Excel 中打开文件"; pid = [int]$pidValue }
     Write-Output (ConvertTo-Json $payload -Compress)
   } catch {
@@ -168,7 +168,7 @@ function Jr-OpenWorkbook {
     Write-Output (ConvertTo-Json $payload -Compress)
   }
 }
-Jr-OpenWorkbook
+Open-ExcelWorkbook
 `;
     const result = await runPowerShell(script);
     if (result.success && result.output) {
@@ -1072,7 +1072,7 @@ try {
   }
 
   // ============================================================
-  // Excel 工作簿 / 工作表 / 单元格 编辑（需求 1）
+  // Excel 工作簿 / 工作表 / 单元格 编辑
   // ============================================================
 
   /** 新建工作表 */
@@ -1317,3 +1317,4 @@ try {
     return runPowerShell(script);
   }
 }
+

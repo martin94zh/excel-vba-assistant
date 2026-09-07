@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Excel VBA 宏运行器 - 支持弹窗检测与自动点击
  *
  * 移植并简化自原项目 vbe-macro.ts 的实现：
@@ -282,7 +282,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 
-public static class JrVbeWin32 {
+public static class VbeWin32 {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
 
@@ -324,33 +324,33 @@ public static class JrVbeWin32 {
 }
 "@
 function Get-WindowTextSafe([IntPtr]$hWnd) {
-  $len = [JrVbeWin32]::GetWindowTextLength($hWnd)
+  $len = [VbeWin32]::GetWindowTextLength($hWnd)
   $sb = New-Object System.Text.StringBuilder ([Math]::Max($len + 1, 8))
-  [void][JrVbeWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
+  [void][VbeWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 function Get-ClassNameSafe([IntPtr]$hWnd) {
   $sb = New-Object System.Text.StringBuilder 256
-  [void][JrVbeWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
+  [void][VbeWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 function Get-ProcessNameSafe([int]$targetProcessId) {
   try { return (Get-Process -Id $targetProcessId -ErrorAction Stop).ProcessName } catch { return "" }
 }
 $results = New-Object System.Collections.Generic.List[object]
-[JrVbeWin32]::EnumWindows({
+[VbeWin32]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrVbeWin32]::IsWindowVisible($hWnd)) { return $true }
-  $windowProcessId = 0; [void][JrVbeWin32]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId)
+  if (-not [VbeWin32]::IsWindowVisible($hWnd)) { return $true }
+  $windowProcessId = 0; [void][VbeWin32]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId)
   $title = Get-WindowTextSafe $hWnd
   $className = Get-ClassNameSafe $hWnd
   $processName = Get-ProcessNameSafe $windowProcessId
   if ($processName -notmatch '${SUPPORTED_DIALOG_PROCESS_PATTERN}') { return $true }
   $buttons = New-Object System.Collections.Generic.List[string]
   $textParts = New-Object System.Collections.Generic.List[string]
-  [JrVbeWin32]::EnumChildWindows($hWnd, {
+  [VbeWin32]::EnumChildWindows($hWnd, {
     param($childHwnd, $childLparam)
-    if (-not [JrVbeWin32]::IsWindowVisible($childHwnd)) { return $true }
+    if (-not [VbeWin32]::IsWindowVisible($childHwnd)) { return $true }
     $childText = Get-WindowTextSafe $childHwnd
     if ([string]::IsNullOrWhiteSpace($childText)) { return $true }
     $childClass = Get-ClassNameSafe $childHwnd
@@ -366,8 +366,8 @@ $results = New-Object System.Collections.Generic.List[object]
 
   if ($buttons.Count -eq 0) { return $true }
 
-  $rect = New-Object JrVbeWin32+RECT
-  [void][JrVbeWin32]::GetWindowRect($hWnd, [ref]$rect)
+  $rect = New-Object VbeWin32+RECT
+  [void][VbeWin32]::GetWindowRect($hWnd, [ref]$rect)
   $width = [Math]::Max(0, $rect.Right - $rect.Left)
   $height = [Math]::Max(0, $rect.Bottom - $rect.Top)
 
@@ -428,7 +428,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 
-public static class JrVbeClickWin32 {
+public static class VbeClickWin32 {
   public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
 
   [DllImport("user32.dll")]
@@ -461,25 +461,25 @@ public static class JrVbeClickWin32 {
 }
 "@
 function Get-WindowTextSafe([IntPtr]$hWnd) {
-  $len = [JrVbeClickWin32]::GetWindowTextLength($hWnd)
+  $len = [VbeClickWin32]::GetWindowTextLength($hWnd)
   $sb = New-Object System.Text.StringBuilder ([Math]::Max($len + 1, 8))
-  [void][JrVbeClickWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
+  [void][VbeClickWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 function Get-ClassNameSafe([IntPtr]$hWnd) {
   $sb = New-Object System.Text.StringBuilder 256
-  [void][JrVbeClickWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
+  [void][VbeClickWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 $target = [IntPtr]::new([long]'${escapePowerShellSingleQuoted(handle)}')
-if (-not [JrVbeClickWin32]::IsWindow($target)) {
+if (-not [VbeClickWin32]::IsWindow($target)) {
   Write-Output "true"
   exit 0
 }
 $buttons = New-Object System.Collections.Generic.List[object]
-[JrVbeClickWin32]::EnumChildWindows($target, {
+[VbeClickWin32]::EnumChildWindows($target, {
   param($child, $lp)
-  if (-not [JrVbeClickWin32]::IsWindowVisible($child)) { return $true }
+  if (-not [VbeClickWin32]::IsWindowVisible($child)) { return $true }
   $class = Get-ClassNameSafe $child
   if ($class -ne "Button") { return $true }
   $text = Get-WindowTextSafe $child
@@ -502,9 +502,9 @@ if ($null -eq $match) {
   exit 0
 }
 try {
-  [void][JrVbeClickWin32]::SendMessage($match.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+  [void][VbeClickWin32]::SendMessage($match.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
   Start-Sleep -Milliseconds 150
-  if (-not [JrVbeClickWin32]::IsWindow($target) -or -not [JrVbeClickWin32]::IsWindowVisible($target)) {
+  if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
     Write-Output "true"
     exit 0
   }
@@ -516,18 +516,18 @@ try {
     }
   } catch {}
   Start-Sleep -Milliseconds 150
-  if (-not [JrVbeClickWin32]::IsWindow($target) -or -not [JrVbeClickWin32]::IsWindowVisible($target)) {
+  if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
     Write-Output "true"
     exit 0
   }
   try {
-    [void][JrVbeClickWin32]::SetForegroundWindow($target)
+    [void][VbeClickWin32]::SetForegroundWindow($target)
     $wshell = New-Object -ComObject WScript.Shell
     [void]$wshell.AppActivate((Get-WindowTextSafe $target))
     $wshell.SendKeys("{ENTER}")
   } catch {}
   Start-Sleep -Milliseconds 150
-  if (-not [JrVbeClickWin32]::IsWindow($target) -or -not [JrVbeClickWin32]::IsWindowVisible($target)) {
+  if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
     Write-Output "true"
   } else {
     Write-Output "false"
@@ -617,7 +617,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 
-public static class JrVbeFillWin32 {
+public static class VbeFillWin32 {
   public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
 
   [DllImport("user32.dll")]
@@ -649,25 +649,25 @@ public static class JrVbeFillWin32 {
 }
 "@
 function Get-WindowTextSafe([IntPtr]$hWnd) {
-  $len = [JrVbeFillWin32]::GetWindowTextLength($hWnd)
+  $len = [VbeFillWin32]::GetWindowTextLength($hWnd)
   $sb = New-Object System.Text.StringBuilder ([Math]::Max($len + 1, 8))
-  [void][JrVbeFillWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
+  [void][VbeFillWin32]::GetWindowText($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 function Get-ClassNameSafe([IntPtr]$hWnd) {
   $sb = New-Object System.Text.StringBuilder 256
-  [void][JrVbeFillWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
+  [void][VbeFillWin32]::GetClassName($hWnd, $sb, $sb.Capacity)
   return $sb.ToString().Trim()
 }
 $target = [IntPtr]::new([long]'${escapePowerShellSingleQuoted(handle)}')
-if (-not [JrVbeFillWin32]::IsWindowVisible($target)) {
+if (-not [VbeFillWin32]::IsWindowVisible($target)) {
   Write-Output (@{ success = $false; error = "弹窗不可见" } | ConvertTo-Json -Compress)
   exit 0
 }
 $edit = $null
-[JrVbeFillWin32]::EnumChildWindows($target, {
+[VbeFillWin32]::EnumChildWindows($target, {
   param($child, $lp)
-  if (-not [JrVbeFillWin32]::IsWindowVisible($child)) { return $true }
+  if (-not [VbeFillWin32]::IsWindowVisible($child)) { return $true }
   $class = Get-ClassNameSafe $child
   if ($class -in @("Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W", "msctls_hotkey32")) {
     if ($null -eq $edit) { $edit = $child }
@@ -679,11 +679,11 @@ if ($null -eq $edit) {
   Write-Output (@{ success = $false; error = "未在弹窗中找到输入框控件" } | ConvertTo-Json -Compress)
   exit 0
 }
-[void][JrVbeFillWin32]::SetForegroundWindow($target)
+[void][VbeFillWin32]::SetForegroundWindow($target)
 Start-Sleep -Milliseconds 100
-[void][JrVbeFillWin32]::SetFocus($edit)
+[void][VbeFillWin32]::SetFocus($edit)
 # 先尝试直接设置文本
-$set = [JrVbeFillWin32]::SendMessage($edit, 0x000C, [IntPtr]::Zero, '${escapedText}')
+$set = [VbeFillWin32]::SendMessage($edit, 0x000C, [IntPtr]::Zero, '${escapedText}')
 Start-Sleep -Milliseconds 100
 # 如果 WM_SETTEXT 失败或需要提交，再用 SendKeys
 if ($set -eq [IntPtr]::Zero -or ${submit ? "$true" : "$false"}) {
@@ -887,7 +887,7 @@ function buildMacroRunResult(
 
   // 如果指定了结果捕获区域，尝试读取
   if (captureResultRange) {
-    // 这里不直接读取，因为读取需要在主 PowerShell 中执行；把需求留给调用方或后续实现
+    // 这里不直接读取，因为读取需要在主 PowerShell 中执行；留给调用方或后续实现
     details.captureResultRange = captureResultRange;
   }
 
@@ -916,3 +916,4 @@ function buildMacroRunResult(
     details,
   };
 }
+

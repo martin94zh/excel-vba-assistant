@@ -57,7 +57,7 @@ export class ExcelClient {
   // ============================================================
 
   async openWorkbook(filePath: string): Promise<string> {
-    // T1: 用户选择文件时通过 MCP 打开 Excel，并确保窗口可见
+    // 用户选择文件时通过 MCP 打开 Excel，并确保窗口可见
     return this.sessionStore.ensureSession(filePath, { show: true });
   }
 

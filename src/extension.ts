@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Excel VBA Assistant - 扩展入口
  *
  * 职责：
@@ -223,7 +223,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
 }
 
 // ============================================================
-// Webview 消息处理（任务文档第五节）
+// Webview 消息处理
 // ============================================================
 
 async function handleWebviewMessage(msg: WebviewMessage): Promise<void> {
@@ -280,7 +280,7 @@ async function handleWebviewMessage(msg: WebviewMessage): Promise<void> {
 }
 
 // ============================================================
-// 选择文件 / 目录（任务文档第五节）
+// 选择文件 / 目录
 // ============================================================
 
 async function handleSelectWorkbook(): Promise<void> {
@@ -317,7 +317,7 @@ async function handleSelectWorkbook(): Promise<void> {
   viewProvider.refresh();
   pushStateToWebview();
 
-  // T1: 用户选择文件后立即通过 MCP 打开 Excel
+  // 用户选择文件后立即通过 MCP 打开 Excel
   const excel = createExcelClient();
   if (!excel) {
     const msg = "MCP Server 尚未启动，无法打开 Excel";
@@ -328,7 +328,7 @@ async function handleSelectWorkbook(): Promise<void> {
     return;
   }
 
-  // T6: 调用 MCP file(open) 之前，检测目标文件是否已被其他 Excel 实例打开
+  // 调用 MCP file(open) 之前，检测目标文件是否已被其他 Excel 实例打开
   const conflictingOwnerPid = await findWorkbookOwnerPid(filePath);
   const currentManagedPid = stateManager.get("excelProcessId");
   if (conflictingOwnerPid && conflictingOwnerPid !== currentManagedPid) {
@@ -379,7 +379,7 @@ async function handleSelectWorkbook(): Promise<void> {
     }
   }
 
-  // T2: 记录打开前的现有 Excel PID 列表，用于排除法定位 MCP 创建的新实例
+  // 记录打开前的现有 Excel PID 列表，用于排除法定位 MCP 创建的新实例
   const existingPids = await listExcelPids();
   output.info(`打开 Excel 前已存在 ${existingPids.length} 个 EXCEL.EXE 进程`);
 
@@ -392,10 +392,10 @@ async function handleSelectWorkbook(): Promise<void> {
     output.info("Excel 已通过 MCP 打开并连接");
     lastExcelAvailable = true;
 
-    // T4: 标记 MCP 会话为活跃
+    // 标记 MCP 会话为活跃
     await stateManager.set("mcpSessionActive", true);
 
-    // T2: 探测并记录 MCP 创建的 Excel 进程 PID
+    // 探测并记录 MCP 创建的 Excel 进程 PID
     const pid = await findExcelPidForWorkbook(filePath, existingPids);
     if (pid) {
       await stateManager.set("excelProcessId", pid);
@@ -576,7 +576,7 @@ async function handleDisconnectExcel(): Promise<void> {
 }
 
 // ============================================================
-// 同步目录管理（需求 2 / 3 / 4）
+// 同步目录管理
 // ============================================================
 
 /** 根据 Excel 文件路径推导默认同步目录：<excelDir>/<fileNameWithoutExt> */
@@ -608,7 +608,7 @@ async function setSyncDirectory(newDir: string, autoCreated: boolean): Promise<v
     startFileWatcher();
   }
 
-  // 在资源管理器中打开同步目录（需求 4）
+  // 在资源管理器中打开同步目录
   await openSyncDirInWorkspace(newDir);
 
   // 如果旧目录是自动创建的且与新目录不同，先迁移文件再删除旧目录
@@ -749,7 +749,7 @@ function createVbaClient(): VbaClient | null {
 }
 
 // ============================================================
-// 同步执行（任务文档第十二、十三节）
+// 同步执行
 // ============================================================
 
 async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<void> {
@@ -829,7 +829,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
 }
 
 // ============================================================
-// 自动执行 VBA（任务文档第十五节）
+// 自动执行 VBA
 // ============================================================
 
 async function tryAutoRunMacro(): Promise<void> {
@@ -862,7 +862,7 @@ async function tryAutoRunMacro(): Promise<void> {
     await stateManager.set("autoRunMacroName", macroName);
   }
 
-  // 弹窗确认（任务文档第十五节：禁止无确认自动执行）
+  // 弹窗确认，禁止无确认自动执行
   const confirm = await vscode.window.showInformationMessage(
     `代码已同步到 VBE，是否运行宏：${macroName}？`,
     "运行",
@@ -947,7 +947,7 @@ async function handleRefreshResources(): Promise<void> {
 }
 
 // ============================================================
-// 自动同步：文件监听（任务文档第十四节）
+// 自动同步：文件监听
 // ============================================================
 
 function startFileWatcher(): void {
@@ -1219,7 +1219,7 @@ async function checkLocalVbaFilesNewerThan(syncDir: string, time: Date): Promise
 }
 
 // ============================================================
-// 推送状态到 Webview（任务文档第六节）
+// 推送状态到 Webview
 // ============================================================
 
 function pushStateToWebview(): void {
@@ -1576,3 +1576,4 @@ async function syncBuiltinSkillsToWorkspace(showMessage = false): Promise<void> 
     void vscode.window.showInformationMessage(`已同步 ${totalCopied} 个 Skill 文件到当前工作区。`);
   }
 }
+

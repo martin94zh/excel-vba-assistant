@@ -1,7 +1,6 @@
 /**
  * Excel VBA Assistant - Webview 侧边栏面板
  *
- * 界面布局与样式遵循任务文档第七、八节要求，
  * 使用 VS Code 主题变量适配 Trae 深色/浅色主题。
  */
 import * as vscode from "vscode";
@@ -82,7 +81,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** 向 Webview 推送状态变更（任务文档第六节） */
+  /** 向 Webview 推送状态变更 */
   postState(payload: StatePayload): void {
     if (this.view) {
       this.view.webview.postMessage({ type: "stateChanged", state: payload });
@@ -407,7 +406,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 <div class="header">
   <div class="header-title">VBA助手</div>
   <div class="version-line">版本号 v${this.version}</div>
-  <div class="notice-line">仅限内部使用，请勿外传</div>
+  <div class="notice-line">Excel VBA 本地同步 + AI 编程助手</div>
   <div class="status-row">
     <span>服务状态：</span>
     <span id="serviceStatusBadge" class="badge ${statusBadgeClass}">${statusText}</span>

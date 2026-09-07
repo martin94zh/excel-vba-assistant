@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 进程检测工具
  *
  * 保留最小化的 OS 级进程检测逻辑，用于 Excel 进程跟踪与管理。
@@ -53,7 +53,7 @@ export async function hasAnyProcessWindow(pid: number): Promise<boolean> {
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
-public static class JrAnyWindowChecker {
+public static class AnyWindowChecker {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")]
   public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -65,11 +65,11 @@ public static class JrAnyWindowChecker {
 "@
 $targetPid = ${pid}
 $found = $false
-[JrAnyWindowChecker]::EnumWindows({
+[AnyWindowChecker]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrAnyWindowChecker]::IsWindow($hWnd)) { return $true }
+  if (-not [AnyWindowChecker]::IsWindow($hWnd)) { return $true }
   $winPid = [uint32]0
-  [void][JrAnyWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  [void][AnyWindowChecker]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
   if ($winPid -eq $targetPid) { $found = $true; return $false }
   return $true
 }, [IntPtr]::Zero) | Out-Null
@@ -96,7 +96,7 @@ Add-Type @"
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
-public static class JrExcelWindowFinder {
+public static class ExcelWindowFinder {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")]
   public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
@@ -113,17 +113,17 @@ public static class JrExcelWindowFinder {
 $targetName = '${wbName.replace(/'/g, "''")}'
 $targetNameNoExt = '${wbNameNoExt.replace(/'/g, "''")}'
 $foundPid = 0
-[JrExcelWindowFinder]::EnumWindows({
+[ExcelWindowFinder]::EnumWindows({
   param($hWnd, $lParam)
-  $visible = [JrExcelWindowFinder]::IsWindowVisible($hWnd)
-  $iconic = [JrExcelWindowFinder]::IsIconic($hWnd)
+  $visible = [ExcelWindowFinder]::IsWindowVisible($hWnd)
+  $iconic = [ExcelWindowFinder]::IsIconic($hWnd)
   if (-not $visible -and -not $iconic) { return $true }
   $sb = New-Object System.Text.StringBuilder 512
-  [void][JrExcelWindowFinder]::GetWindowText($hWnd, $sb, 512)
+  [void][ExcelWindowFinder]::GetWindowText($hWnd, $sb, 512)
   $title = $sb.ToString()
   if ($title -like "*$targetName*" -or $title -like "*$targetNameNoExt*") {
     $pid = [uint32]0
-    [void][JrExcelWindowFinder]::GetWindowThreadProcessId($hWnd, [ref]$pid)
+    [void][ExcelWindowFinder]::GetWindowThreadProcessId($hWnd, [ref]$pid)
     $foundPid = [int]$pid
     return $false
   }
@@ -230,7 +230,7 @@ export async function findExcelPidForWorkbook(path: string, excludePids?: number
 }
 
 /**
- * 查找持有指定工作簿的 Excel 进程 PID（T6 冲突检测）。
+ * 查找持有指定工作簿的 Excel 进程 PID。
  *
  * 优先使用 WMI Win32_Process CommandLine 匹配目标文件完整路径；
  * 多个进程命中时，用窗口标题交叉验证；无法区分时返回第一个候选。
@@ -276,7 +276,7 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
-public static class JrExcelAttachT6 {
+public static class ExcelWindowUtils {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
@@ -287,14 +287,14 @@ public static class JrExcelAttachT6 {
 "@
 $targetPid = ${pid}
 $foundHwnd = [IntPtr]::Zero
-[JrExcelAttachT6]::EnumWindows({
+[ExcelWindowUtils]::EnumWindows({
   param($hWnd, $lParam)
-  if (-not [JrExcelAttachT6]::IsWindowVisible($hWnd)) { return $true }
+  if (-not [ExcelWindowUtils]::IsWindowVisible($hWnd)) { return $true }
   $winPid = [uint32]0
-  [void][JrExcelAttachT6]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  [void][ExcelWindowUtils]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
   if ($winPid -ne $targetPid) { return $true }
   $sb = New-Object System.Text.StringBuilder 256
-  [void][JrExcelAttachT6]::GetClassName($hWnd, $sb, $sb.Capacity)
+  [void][ExcelWindowUtils]::GetClassName($hWnd, $sb, $sb.Capacity)
   if ($sb.ToString() -eq "XLMAIN") { $script:foundHwnd = $hWnd; return $false }
   return $true
 }, [IntPtr]::Zero) | Out-Null
@@ -303,7 +303,7 @@ $excel = $null
 if ($foundHwnd -ne [IntPtr]::Zero) {
   $guid = [Guid]::Parse("00020400-0000-0000-C000-000000000046")
   $obj = $null
-  $hr = [JrExcelAttachT6]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
+  $hr = [ExcelWindowUtils]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
   if ($hr -eq 0) {
     $excel = $obj.Application
   }
@@ -334,3 +334,5 @@ Write-Output "OK"
     return false;
   }
 }
+
+
