@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-const MCP_SERVER_NAME = "excel-vba-mcp-server";
+const MCP_SERVER_NAME = "excel-mcp";
 const TRACK_FILE = "mcp-workspaces.json";
 const APP_DIR = "excel-vba-assistant";
 

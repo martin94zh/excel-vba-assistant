@@ -1,57 +1,57 @@
-# vba-write
+﻿# vba-write
 
-Modify the VBAProject: update component code, create new components, or delete components.
+Modify the VBAProject: create new components, update existing component code, or delete components.
 
-## Tools
+## Tool
 
-- `excel_update_vba_code`
-- `excel_create_vba_component`
-- `excel_delete_vba_component`
+`vba`
 
 ## Parameters
 
-### excel_update_vba_code
+### Update existing component code
 
 ```json
 {
-  "workbookId": "book",
-  "componentName": "Module1",
+  "action": "update",
+  "session_id": "abc123",
+  "module_name": "Module1",
   "code": "Sub Main()\n    MsgBox \"Hello\"\nEnd Sub"
 }
 ```
 
-- `componentName` (required): must already exist in VBE.
-- `code` (required): clean VBA code. Do **not** include `VERSION`, `Attribute`, `Begin`, or `End` header lines.
+- `moduleName` (required): must already exist in VBE.
+- `code` (required): clean VBA code.
 
-### excel_create_vba_component
-
-```json
-{
-  "workbookId": "book",
-  "componentType": "standardModule",
-  "componentName": "Module2",
-  "code": "Sub NewProc()\nEnd Sub"
-}
-```
-
-- `componentType` (required): `standardModule`, `classModule`, or `userForm`.
-- `componentName` (required): English letter followed by letters/digits/underscores.
-- `code` (optional): initial clean code.
-
-### excel_delete_vba_component
+### Create a new component
 
 ```json
 {
-  "workbookId": "book",
-  "componentName": "Module2"
+  "action": "import",
+  "session_id": "abc123",
+  "module_name": "Module2",
+  "code": "Sub NewProc()\nEnd Sub",
+  "type": "standardModule"
 }
 ```
 
-After deleting a component with this tool, the local sync directory still contains the old file. Call `excel_sync_vbe_to_local` to remove it, or delete the local file and call `excel_sync_local_to_vbe` to delete the VBE component via sync.
+- `type` (required): `standardModule`, `classModule`, or `userForm`.
+- `moduleName` (required): English letter followed by letters/digits/underscores.
+- `code` (optional): initial code.
+
+### Delete a component
+
+```json
+{
+  "action": "delete",
+  "session_id": "abc123",
+  "module_name": "Module2"
+}
+```
+
+After deleting a component, the local sync directory may still contain the old file. Call the plugin's sync command or delete the local file and sync back to update the directory.
 
 ## Important
 
-- These tools are blocked when `VBE_READ_ONLY=true`.
-- You cannot create or delete document modules (`Sheet1`, `ThisWorkbook`). Use `excel_update_vba_code` to change their code.
-- Creating `userForm` via this tool only creates the code module. If you need the visual layout, create the form in VBE first, then update its code.
-- Always read the existing code with `excel_get_vba_code` before overwriting, to avoid accidental loss.
+- You cannot create or delete document modules (`Sheet1`, `ThisWorkbook`). Use `vba(update)` to change their code only.
+- Creating `userForm` via `vba(import)` only creates the code module. If you need the visual layout, create the form in VBE first, then update its code.
+- Always read the existing code with `vba(view)` before overwriting, to avoid accidental loss.

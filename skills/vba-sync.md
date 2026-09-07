@@ -2,32 +2,24 @@
 
 Export VBA code from Excel VBE to a local directory, or import local code back into VBE.
 
-## Tools
+> These sync operations are an **internal plugin function**. They are performed by the plugin's Legacy COM mechanism, which combines `vba(list/view/import/update/delete)` calls internally to perform batch synchronization. **AI must NOT directly call the MCP `vba` tool to do batch import/export/sync.**
 
-- `excel_sync_vbe_to_local`
-- `excel_sync_local_to_vbe`
+## What AI CAN do with the `vba` tool
 
-## Parameters
+AI may call the MCP `vba` tool only for **single-component or macro operations**, for example:
 
-### excel_sync_vbe_to_local
+- `vba(action: 'run', procedure_name: 'MyMacro')` — execute a VBA procedure.
+- `vba(action: 'view', module_name: 'Module1')` — read a single module's code.
+- `vba(action: 'update', module_name: 'Module1', vba_code: '...')` — update a single module's code.
 
-```json
-{
-  "workbookId": "book",
-  "localDir": "D:\\work\\vba_sync"
-}
-```
+For **batch VBE ↔ local synchronization**, use the plugin commands below instead.
 
-- `localDir` (optional): defaults to `VBE_LOCAL_DIR` or the workbook's registered `localDir`.
+## Plugin Commands
 
-### excel_sync_local_to_vbe
+- `Excel VBA: VBE → 本地 同步`
+- `Excel VBA: 本地 → VBE 同步`
 
-```json
-{
-  "workbookId": "book",
-  "localDir": "D:\\work\\vba_sync"
-}
-```
+The VBE ↔ local synchronization is handled entirely by the plugin's Legacy COM mechanism. AI does not need to manage, trigger, or intervene in this process.
 
 ## Local Directory Structure
 
@@ -43,24 +35,22 @@ localDir/
 
 ## Important
 
-- `excel_sync_local_to_vbe` is blocked when `VBE_READ_ONLY=true`.
-- Exported files are UTF-8; the server converts from VBE's internal encoding automatically.
-- Document modules (`.wks`, `.wbk`) only update existing code, they never create or delete sheets/workbooks.
+- `本地 → VBE` sync is blocked when the workbook is read-only.
+- Exported files are UTF-8.
+- Document modules (`.wks`, `.wbk`) only update existing code; they never create or delete sheets/workbooks.
 - UserForm `.frm` files update existing forms' code only; visual layout is not created from local files.
-- Before `excel_sync_local_to_vbe`, inspect `workbook.json` and the local files to ensure the target components exist in VBE.
+- Before `本地 → VBE` sync, inspect `workbook.json` and the local files to ensure the target components exist in VBE.
 
 ## Deleting Components via Sync
 
 These sync tools also perform **delete synchronization**:
 
-- After `excel_sync_vbe_to_local`, local files whose components no longer exist in VBE are removed.
-- After `excel_sync_local_to_vbe`, VBE components whose files no longer exist locally are removed, except for worksheet/workbook object modules (`Sheet*.wks`, `ThisWorkbook.wbk`).
+- After `VBE → 本地`, local files whose components no longer exist in VBE are removed.
+- After `本地 → VBE`, VBE components whose files no longer exist locally are removed, except for worksheet/workbook object modules (`Sheet*.wks`, `ThisWorkbook.wbk`).
 
-To delete a component through MCP:
+To delete a component via sync:
 
 1. Delete the local file (`模块/Old.bas`, `类模块/Old.cls`, or `窗体/Old.frm`).
-2. Call `excel_sync_local_to_vbe`.
+2. Run the plugin's **本地 → VBE 同步** command.
 
-Or use `excel_delete_vba_component` for single-component deletion, then call `excel_sync_vbe_to_local` to update the local directory.
-
-> Danger: deleting files or components via sync is irreversible. Use `VBE_READ_ONLY=true` to prevent accidental changes.
+> Danger: deleting files or components via sync is irreversible.

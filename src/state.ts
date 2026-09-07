@@ -25,6 +25,8 @@ export interface ExcelVbaPluginState {
   lastError?: string;
   warningCount: number;
   isSyncing: boolean;
+  mcpSessionId: string;
+  mcpSessionActive: boolean;
 }
 
 const DEFAULTS: ExcelVbaPluginState = {
@@ -41,6 +43,8 @@ const DEFAULTS: ExcelVbaPluginState = {
   lastError: undefined,
   warningCount: 0,
   isSyncing: false,
+  mcpSessionId: "",
+  mcpSessionActive: false,
 };
 
 const PREFIX = "excelVba-";
@@ -93,6 +97,7 @@ export class StateManager {
       lastError: this.getRuntime("lastError") ?? DEFAULTS.lastError,
       warningCount: this.getRuntime("warningCount") ?? DEFAULTS.warningCount,
       isSyncing: this.getRuntime("isSyncing") ?? DEFAULTS.isSyncing,
+      mcpSessionActive: this.get("mcpSessionActive"),
     };
   }
 }

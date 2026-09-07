@@ -1,52 +1,41 @@
-# vba-read
+﻿# vba-read
 
 Read VBAProject structure and code without modifying anything.
 
-## Tools
+## Tool
 
-- `excel_list_resources`
-- `excel_get_vba_code`
-- `excel_get_all_vba_code`
-- `excel_list_macros`
+`vba`
 
 ## Parameters
 
-### excel_list_resources
-
-```json
-{ "workbookId": "book" }
-```
-
-Returns every VBComponent with `name`, `type` (`StdModule` / `ClassModule` / `UserForm` / `Worksheet` / `ThisWorkbook`), and `codeLines`.
-
-### excel_get_vba_code
+### List all VBA components
 
 ```json
 {
-  "workbookId": "book",
-  "componentName": "Module1"
+  "action": "list",
+  "session_id": "abc123"
 }
 ```
 
-- `componentName` (required): exact VBE component name.
+Returns every VBComponent with `name` and `type` (`standardModule` / `classModule` / `userForm` / `worksheet` / `document`).
 
-### excel_get_all_vba_code
-
-```json
-{ "workbookId": "book" }
-```
-
-Returns the full code of every component in one call.
-
-### excel_list_macros
+### Read a single component's code
 
 ```json
-{ "workbookId": "book" }
+{
+  "action": "view",
+  "session_id": "abc123",
+  "module_name": "Module1"
+}
 ```
 
-Returns Sub/Function names in `module.procedure` form.
+- `moduleName` (required): exact VBE component name.
+
+### List available macros
+
+There is no dedicated macro-listing tool. To discover macros, first call `vba(list)` to get all modules, then call `vba(view)` for each module and parse `Sub` / `Function` definitions.
 
 ## Notes
 
-- Use `excel_get_all_vba_code` instead of looping through `excel_get_vba_code` when you need to understand the whole project.
-- Use `excel_list_macros` to verify a macro exists before running it.
+- Use `vba(list)` to get all components, then iterate with `vba(view)` instead of multiple individual calls when possible.
+- Always verify a macro exists before running it.

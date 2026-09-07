@@ -1,7 +1,7 @@
 /**
  * Excel VBA Assistant - 状态栏管理
  *
- * 状态栏文本和颜色直接与服务状态（ServiceStatus）对齐：
+ * 状态栏使用颜色原点（图标前景色）表示服务状态：
  *   未知 / 启动中 / 已连接 / 同步中 / 已同步 / 未连接 / 错误
  *
  * synced 会在 5 秒后自动回落到 connected，避免长期占用强调色。
@@ -26,34 +26,37 @@ export class StatusBarManager {
   }
 
   private apply(status: ServiceStatus): void {
+    const state = this.stateManager.getAll();
+    const mcpSuffix = state.mcpSessionActive ? " · MCP" : "";
+    this.item.backgroundColor = undefined;
     switch (status) {
       case "unknown":
         this.item.text = "$(circle-outline) VBE 同步";
-        this.item.backgroundColor = undefined;
+        this.item.color = undefined;
         break;
       case "starting":
-        this.item.text = "$(sync) VBE 同步";
-        this.item.backgroundColor = undefined;
+        this.item.text = `$(sync) VBE 同步${mcpSuffix}`;
+        this.item.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
         break;
       case "connected":
-        this.item.text = "$(circle-filled) VBE 同步";
-        this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.item.text = `$(circle-filled) VBE 同步${mcpSuffix}`;
+        this.item.color = new vscode.ThemeColor("testing.iconPassed");
         break;
       case "syncing":
-        this.item.text = "$(sync~spin) VBE 同步";
-        this.item.backgroundColor = undefined;
+        this.item.text = `$(sync~spin) VBE 同步${mcpSuffix}`;
+        this.item.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
         break;
       case "synced":
-        this.item.text = "$(check) VBE 同步";
-        this.item.backgroundColor = new vscode.ThemeColor("excelVba.statusBarSyncedBackground");
+        this.item.text = `$(check) VBE 同步${mcpSuffix}`;
+        this.item.color = new vscode.ThemeColor("testing.iconPassed");
         break;
       case "disconnected":
         this.item.text = "$(circle-outline) VBE 同步";
-        this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+        this.item.color = new vscode.ThemeColor("statusBarItem.warningForeground");
         break;
       case "error":
         this.item.text = "$(error) VBE 同步";
-        this.item.backgroundColor = new vscode.ThemeColor("statusBarItem.errorBackground");
+        this.item.color = new vscode.ThemeColor("statusBarItem.errorForeground");
         break;
     }
     this.item.tooltip = this.buildTooltip(status);
@@ -66,6 +69,8 @@ export class StatusBarManager {
     lines.push("");
     lines.push(`- Excel 文件：${state.workbookPath || "未选择"}`);
     lines.push(`- 同步目录：${state.syncDirectory || "未设置"}`);
+    lines.push(`- Excel PID：${state.excelProcessId > 0 ? state.excelProcessId : "未记录"}`);
+    lines.push(`- MCP 会话：${state.mcpSessionActive ? "活跃" : "未激活"}`);
     lines.push(`- 服务状态：${this.statusLabel(status)}`);
     lines.push(`- 上次同步方向：${state.lastSyncDirection === "vbe-to-local" ? "VBE → 本地" : state.lastSyncDirection === "local-to-vbe" ? "本地 → VBE" : "无"}`);
     lines.push(`- 上次同步时间：${this.formatSyncTime(state.lastSyncAt)}`);

@@ -1,0 +1,2692 @@
+[
+  {
+    "name": "vba",
+    "title": "VBA Operations",
+    "description": "VBA module and procedure operations for macro-enabled workbooks (.xlsm). Lists and views existing VBA components, imports new standard modules, updates or deletes module code, and runs procedures. VBA trust must be enabled manually in Excel; ExcelMcp does not configure Trust Center settings.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "view",
+            "import",
+            "update",
+            "run",
+            "delete"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "module_name": {
+          "description": "(required for: view, import, update, delete)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "vba_code": {
+          "description": "(required for: import, update)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "vba_code_file": {
+          "description": "Path to file containing vbaCode",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "procedure_name": {
+          "description": "(required for: run)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "timeout_seconds": {
+          "description": "Timeout in seconds",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "parameters": {
+          "description": "(required for: run)",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "VBA Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "automation",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "range_link",
+    "title": "Range Link Operations",
+    "description": "Hyperlink and cell protection operations. HYPERLINKS: add-hyperlink (URL: web, file, mailto), remove-hyperlink (keeps cell content), list-hyperlinks (all on worksheet), get-hyperlink (specific cell). CELL PROTECTION: set-cell-lock/get-cell-lock (only effective when sheet protection is enabled).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "add-hyperlink",
+            "remove-hyperlink",
+            "list-hyperlinks",
+            "get-hyperlink",
+            "set-cell-lock",
+            "get-cell-lock"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "cell_address": {
+          "description": "(required for: add-hyperlink, get-hyperlink)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "url": {
+          "description": "(required for: add-hyperlink)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "display_text": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "tooltip": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required for: remove-hyperlink, set-cell-lock, get-cell-lock)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "locked": {
+          "description": "(required for: set-cell-lock)",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Range Link Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "datamodel",
+    "title": "Data Model Operations",
+    "description": "Data Model (Power Pivot) - DAX measures and table management. CRITICAL: Worksheet tables and Data Model are separate! After table(append), MUST call datamodel(refresh) to sync. Power Query refresh auto-syncs. DAX MEASURES: Create with formulas like SUM(Sales[Amount]); DAX is preserved exactly by default. Set formatDax=true only with user consent; it sends formulas to daxformatter.com. DAX EVALUATE: Execute queries (SUMMARIZE, FILTER, CALCULATETABLE, TOPN). DMV QUERIES: SELECT * FROM $SYSTEM.SchemaRowset for metadata. DAX FILE INPUT: daxFormulaFile/daxQueryFile for complex multi-line DAX. TIMEOUT: 2 min. Use datamodel_relationship for relationships, table for add-to-datamodel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list-tables",
+            "list-columns",
+            "read-table",
+            "read-info",
+            "list-measures",
+            "read",
+            "delete-measure",
+            "delete-table",
+            "rename-table",
+            "refresh",
+            "create-measure",
+            "update-measure",
+            "evaluate",
+            "execute-dmv"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "table_name": {
+          "description": "(required for: list-columns, read-table, delete-table, create-measure)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "measure_name": {
+          "description": "(required for: read, delete-measure, create-measure, update-measure)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "old_name": {
+          "description": "(required for: rename-table)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_name": {
+          "description": "(required for: rename-table)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "timeout_seconds": {
+          "description": "Timeout in seconds",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "dax_formula": {
+          "description": "(required for: create-measure)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "dax_formula_file": {
+          "description": "Path to file containing daxFormula",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "format_type": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "description": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "format_dax": {
+          "type": "boolean",
+          "default": false
+        },
+        "dax_query": {
+          "description": "(required for: evaluate)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "dax_query_file": {
+          "description": "Path to file containing daxQuery",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "dmv_query": {
+          "description": "(required for: execute-dmv)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "dmv_query_file": {
+          "description": "Path to file containing dmvQuery",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Data Model Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "namedrange",
+    "title": "Named Range Operations",
+    "description": "Named ranges for formulas/parameters. LIST returns visible user-defined names; hidden/internal Excel names are omitted before value inspection, and large ranges return metadata without materializing values. CREATE/UPDATE: value is cell reference (e.g., Sheet1!$A$1). WRITE: value is data to store in the named range. TIP: Use range(rangeAddress=namedRangeName) for bulk data operations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "write",
+            "read",
+            "update",
+            "create",
+            "delete"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "name": {
+          "description": "(required for: write, read, update, create, delete)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "value": {
+          "description": "(required for: write)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "reference": {
+          "description": "(required for: update, create)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Named Range Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "pivottable_field",
+    "title": "PivotTable Field Operations",
+    "description": "PivotTable field management: add/remove/configure fields, filtering, sorting, and grouping. IMPORTANT: Field operations modify structure only - call pivottable(refresh) after configuring, especially for OLAP/Data Model PivotTables. FIELD AREAS: Row (categories), Column (headers), Value (aggregation: Sum/Count/Average/Max/Min/etc.), Filter (report-level). GROUPING: date (Days/Months/Quarters/Years), numeric (start/end/interval). NUMBER FORMAT: US format codes. Use pivottable for lifecycle, pivottable_calc for calculated fields.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list-fields",
+            "add-row-field",
+            "add-column-field",
+            "add-value-field",
+            "add-filter-field",
+            "remove-field",
+            "set-field-function",
+            "set-field-name",
+            "set-field-format",
+            "set-field-filter",
+            "sort-field",
+            "group-by-date",
+            "group-by-numeric"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "pivot_table_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "field_name": {
+          "description": "(required for: add-row-field, add-column-field, add-value-field, add-filter-field, remove-field, set-field-function, set-field-name, set-field-format, set-field-filter, sort-field, group-by-date, group-by-numeric)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "position": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "aggregation_function": {
+          "description": "(required for: set-field-function)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "custom_name": {
+          "description": "(required for: set-field-name)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "number_format": {
+          "description": "(required for: set-field-format)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "selected_values": {
+          "description": "(required for: set-field-filter) (JSON array, e.g., '[\"value1\",\"value2\"]')",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "direction": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "interval": {
+          "description": "(required for: group-by-date)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "start": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "end_value": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "interval_size": {
+          "description": "(required for: group-by-numeric)",
+          "type": "number",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "PivotTable Field Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "screenshot",
+    "title": "Screenshot",
+    "description": "Capture Excel worksheet content as images for visual verification. Uses Excel's built-in rendering to capture all visual elements (formatting, charts, conditional formatting). capture: specific range (requires rangeAddress). capture-sheet: entire used area of worksheet. Returns the image directly as MCP ImageContent. Use after operations to visually verify results. quality: Medium (default, JPEG 75% scale, ~4-8x smaller than High), High (PNG full scale), Low (JPEG 50% scale).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "capture",
+            "capture-sheet"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "type": "string",
+          "default": "A1:Z30"
+        },
+        "quality": {
+          "type": "string",
+          "enum": [
+            "Medium",
+            "High",
+            "Low"
+          ],
+          "default": "Medium"
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Screenshot",
+      "destructiveHint": false
+    },
+    "_meta": {
+      "category": "visualization",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "calculation_mode",
+    "title": "Calculation Mode Control",
+    "description": "Optimize bulk write performance by controlling Excel's automatic recalculation. Use manual mode when writing 10+ cells to avoid recalculating after every write. MODES: automatic (default - recalculates on every change), manual (only when explicitly requested), semi-automatic (auto except data tables). BATCH WORKFLOW (required for 10+ cell operations): 1. set-mode(manual) 2. Perform all writes (range set-values, set-formulas) 3. calculate(workbook) 4. set-mode(automatic). SCOPES for calculate: workbook (all formulas), sheet (requires sheetName), range (requires sheetName + rangeAddress). NOT needed for: reading formulas, small edits (1-9 cells), or when immediate calculation results are required.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "get-mode",
+            "set-mode",
+            "calculate"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "mode": {
+          "description": "(required for: set-mode)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "scope": {
+          "description": "(required for: calculate)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "sheet_name": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Calculation Mode Control",
+      "destructiveHint": false
+    },
+    "_meta": {
+      "category": "settings",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "range",
+    "title": "Range Operations",
+    "description": "Core range operations: get/set values and formulas, copy ranges, clear content, discover data regions. Use range_edit for insert/delete/find/sort. Use range_format for styling/validation. Use range_link for hyperlinks/protection. Use calculation_mode for recalculation. EXCEL TABLES: If user asks to 'format as table', 'create a table', 'put data in an Excel Table' — do NOT try to use range for this. Use table(action:'create') on the data range to create a proper Excel Table with filter arrows, banded rows, and automatic expansion. DATA FORMAT: 2D JSON arrays [[row1col1,row1col2],[row2col1,row2col2]]. Single cell returns [[value]]. FILE INPUT: For set-values/set-formulas, provide EITHER inline values/formulas OR a valuesFile/formulasFile path to a .json or .csv file. Prefer file input for large datasets. BEST PRACTICE: get-values before overwriting, clear-contents (not clear-all) to preserve formatting. NAMED RANGES: Use sheetName='' and rangeAddress=namedRangeName.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "get-values",
+            "set-values",
+            "get-formulas",
+            "set-formulas",
+            "validate-formulas",
+            "clear-all",
+            "clear-contents",
+            "clear-formats",
+            "copy",
+            "copy-values",
+            "copy-formulas",
+            "get-number-formats",
+            "set-number-format",
+            "set-number-formats",
+            "get-used-range",
+            "get-current-region",
+            "get-info"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required for: get-values, set-values, get-formulas, set-formulas, validate-formulas, clear-all, clear-contents, clear-formats, get-number-formats, set-number-format, set-number-formats, get-used-range, get-current-region, get-info)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required for: get-values, set-values, get-formulas, set-formulas, validate-formulas, clear-all, clear-contents, clear-formats, get-number-formats, set-number-format, set-number-formats, get-info)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {},
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "values_file": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formulas": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "nullable": true
+            },
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "formulas_file": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_sheet": {
+          "description": "(required for: copy, copy-values, copy-formulas)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_range": {
+          "description": "(required for: copy, copy-values, copy-formulas)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_sheet": {
+          "description": "(required for: copy, copy-values, copy-formulas)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_range": {
+          "description": "(required for: copy, copy-values, copy-formulas)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "format_code": {
+          "description": "(required for: set-number-format)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "nullable": true
+            },
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "formats_file": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "cell_address": {
+          "description": "(required for: get-current-region)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Range Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "powerquery",
+    "title": "Power Query Operations",
+    "description": "Power Query M code and data loading. TEST-FIRST WORKFLOW: 1. evaluate (test M code without persisting) 2. create/update (store validated query) 3. refresh/load-to (load data to destination). IF CREATE FAILS: Use evaluate for detailed M engine error. DATETIME: Always include Table.TransformColumnTypes() for explicit column types. DESTINATIONS: worksheet (default), data-model (for DAX), both, connection-only. M-CODE: Preserved exactly by default. Set formatMCode=true only with user consent; it sends M code to powerqueryformatter.com. TARGET CELL: targetCellAddress places tables without clearing sheet. TIMEOUT: 30 min auto-timeout for refresh and load-to. For quick queries, use timeout=60. timeout=0 or omitted uses the 30 min default.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "view",
+            "refresh",
+            "get-load-config",
+            "delete",
+            "create",
+            "update",
+            "load-to",
+            "refresh-all",
+            "rename",
+            "unload",
+            "evaluate"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "query_name": {
+          "description": "(required for: view, refresh, get-load-config, delete, create, update, load-to, unload)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "timeout_seconds": {
+          "description": "(required for: refresh) (in seconds)",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "m_code": {
+          "description": "(required for: create, update, evaluate)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "m_code_file": {
+          "description": "Path to file containing mCode",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "load_destination": {
+          "description": "(required for: load-to)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_sheet": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_cell_address": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "format_m_code": {
+          "type": "boolean",
+          "default": false
+        },
+        "refresh": {
+          "type": "boolean",
+          "default": true
+        },
+        "old_name": {
+          "description": "(required for: rename)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_name": {
+          "description": "(required for: rename)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Power Query Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "query",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "conditionalformat",
+    "title": "Conditional Formatting",
+    "description": "Conditional formatting - visual rules based on cell values. TYPES: cellValue (accepts both camelCase and kebab-case, e.g. cell-value), expression. For cellValue: requires operatorType + formula1. FORMAT: interiorColor/fontColor as #RRGGBB hex, fontBold/fontItalic booleans, borderStyle/borderColor.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "add-rule",
+            "clear-rules"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "rule_type": {
+          "description": "(required for: add-rule)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "operator_type": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formula1": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formula2": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "interior_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "interior_pattern": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "font_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "font_bold": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "font_italic": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "border_style": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "border_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Conditional Formatting",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "structure",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "pivottable_calc",
+    "title": "PivotTable Calc Operations",
+    "description": "PivotTable calculated fields/members, layout configuration, and data extraction. CALCULATED FIELDS: Create formulas like =Revenue-Cost, then add to Values with pivottable_field. CALCULATED MEMBERS: MDX expressions (OLAP/Data Model only). LAYOUT: 0=Compact, 1=Tabular, 2=Outline. Use pivottable for lifecycle, pivottable_field for field management.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "get-data",
+            "create-calculated-field",
+            "list-calculated-fields",
+            "delete-calculated-field",
+            "list-calculated-members",
+            "create-calculated-member",
+            "delete-calculated-member",
+            "set-layout",
+            "set-subtotals",
+            "set-grand-totals"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "pivot_table_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "field_name": {
+          "description": "(required for: create-calculated-field, delete-calculated-field, set-subtotals)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formula": {
+          "description": "(required for: create-calculated-field, create-calculated-member)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "member_name": {
+          "description": "(required for: create-calculated-member, delete-calculated-member)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "type": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "solve_order": {
+          "type": "integer",
+          "default": 0
+        },
+        "display_folder": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "number_format": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "row_layout": {
+          "description": "(required for: set-layout)",
+          "type": "integer",
+          "default": 0
+        },
+        "show_subtotals": {
+          "description": "(required for: set-subtotals)",
+          "type": "boolean",
+          "default": false
+        },
+        "show_row_grand_totals": {
+          "description": "(required for: set-grand-totals)",
+          "type": "boolean",
+          "default": false
+        },
+        "show_column_grand_totals": {
+          "description": "(required for: set-grand-totals)",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "PivotTable Calc Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "slicer",
+    "title": "Slicer Operations",
+    "description": "Slicer management: create, list, configure, delete visual filtering controls for PivotTables and Tables. NAMING: Auto-generate descriptive names like RegionSlicer, CategorySlicer. PIVOTTABLE SLICERS: create-slicer, list-slicers, set-slicer-selection, delete-slicer. TABLE SLICERS: create-table-slicer, list-table-slicers, set-table-slicer-selection, delete-table-slicer. SELECTION: selectedItems as JSON array of strings. Use clearFirst=false to add to existing selection.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "create-slicer",
+            "list-slicers",
+            "set-slicer-selection",
+            "delete-slicer",
+            "create-table-slicer",
+            "list-table-slicers",
+            "set-table-slicer-selection",
+            "delete-table-slicer"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "pivot_table_name": {
+          "description": "(required for: create-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "field_name": {
+          "description": "(required for: create-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "slicer_name": {
+          "description": "(required for: create-slicer, set-slicer-selection, delete-slicer, create-table-slicer, set-table-slicer-selection, delete-table-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "destination_sheet": {
+          "description": "(required for: create-slicer, create-table-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "position": {
+          "description": "(required for: create-slicer, create-table-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "selected_items": {
+          "description": "(required for: set-slicer-selection, set-table-slicer-selection) (JSON array, e.g., '[\"value1\",\"value2\"]')",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "clear_first": {
+          "type": "boolean",
+          "default": true
+        },
+        "table_name": {
+          "description": "(required for: create-table-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "column_name": {
+          "description": "(required for: create-table-slicer)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Slicer Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "chart_config",
+    "title": "Chart Configuration",
+    "description": "Chart configuration - data source, series, type, title, axis labels, legend, and styling. SERIES: add-series (valuesRange required), remove-series (1-based index), set-source-range. TITLES: set-title, set-axis-title (Category/Value/Secondary). AXIS: number format, scale min/max/units. LEGEND: Bottom, Corner, Top, Right, Left. STYLES: 1-48 built-in. DATA LABELS: values, percentages, positions (Center, InsideEnd, OutsideEnd, BestFit). GRIDLINES: major/minor for value/category axes. TRENDLINES: Linear, Exponential, Logarithmic, Polynomial, Power, MovingAverage. SERIES FORMAT: marker style/size/colors, invert if negative. PLACEMENT: 1=move+size with cells, 2=move only, 3=free floating. Use chart for lifecycle.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "set-source-range",
+            "add-series",
+            "remove-series",
+            "set-chart-type",
+            "set-title",
+            "set-axis-title",
+            "get-axis-number-format",
+            "set-axis-number-format",
+            "show-legend",
+            "set-style",
+            "set-placement",
+            "set-data-labels",
+            "get-axis-scale",
+            "set-axis-scale",
+            "get-gridlines",
+            "set-gridlines",
+            "set-series-format",
+            "list-trendlines",
+            "add-trendline",
+            "delete-trendline",
+            "set-trendline"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "chart_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_range": {
+          "description": "(required for: set-source-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "series_name": {
+          "description": "(required for: add-series)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "values_range": {
+          "description": "(required for: add-series)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "category_range": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "series_index": {
+          "description": "(required for: remove-series, set-series-format, list-trendlines, add-trendline, delete-trendline, set-trendline)",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "chart_type": {
+          "description": "(required for: set-chart-type)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "title": {
+          "description": "(required for: set-title, set-axis-title)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "axis": {
+          "description": "(required for: set-axis-title, get-axis-number-format, set-axis-number-format, get-axis-scale, set-axis-scale, set-gridlines)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "number_format": {
+          "description": "(required for: set-axis-number-format)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "visible": {
+          "description": "(required for: show-legend)",
+          "type": "boolean",
+          "default": false
+        },
+        "legend_position": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "style_id": {
+          "description": "(required for: set-style)",
+          "type": "integer",
+          "default": 0
+        },
+        "placement": {
+          "description": "(required for: set-placement)",
+          "type": "integer",
+          "default": 0
+        },
+        "show_value": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_percentage": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_series_name": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_category_name": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_bubble_size": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "separator": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "label_position": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "minimum_scale": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "maximum_scale": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "major_unit": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "minor_unit": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "show_major": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_minor": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "marker_style": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "marker_size": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "marker_background_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "marker_foreground_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "invert_if_negative": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "trendline_type": {
+          "description": "(required for: add-trendline)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "order": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "period": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "forward": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "backward": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "intercept": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "display_equation": {
+          "type": "boolean",
+          "default": false,
+          "nullable": true
+        },
+        "display_r_squared": {
+          "type": "boolean",
+          "default": false,
+          "nullable": true
+        },
+        "name": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "trendline_index": {
+          "description": "(required for: delete-trendline, set-trendline)",
+          "type": "integer",
+          "default": 0
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Chart Configuration",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "datamodel_relationship",
+    "title": "Data Model Relationship Operations",
+    "description": "Data Model relationships - link tables for cross-table DAX calculations. CRITICAL: Deleting/recreating tables removes ALL their relationships. Use list before table operations to backup. REQUIREMENTS: Both tables in Data Model, compatible column types. From=many-side (detail), To=one-side (lookup). ACTIVE VS INACTIVE: One active relationship per table pair. Use DAX USERELATIONSHIP() for inactive. TIMEOUT: 2 min. Use datamodel for tables and DAX measures.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list-relationships",
+            "read-relationship",
+            "create-relationship",
+            "update-relationship",
+            "delete-relationship"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "from_table": {
+          "description": "(required for: read-relationship, create-relationship, update-relationship, delete-relationship)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "from_column": {
+          "description": "(required for: read-relationship, create-relationship, update-relationship, delete-relationship)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "to_table": {
+          "description": "(required for: read-relationship, create-relationship, update-relationship, delete-relationship)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "to_column": {
+          "description": "(required for: read-relationship, create-relationship, update-relationship, delete-relationship)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "active": {
+          "description": "(required for: update-relationship)",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Data Model Relationship Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "file",
+    "title": "File Operations",
+    "description": "File and session management for Excel automation. WORKFLOW: open → use sessionId with other tools → close (save=true to persist changes). NEW FILES: Use 'create' action to create file AND start session in one call. SESSION REUSE: Call 'list' first to check for existing sessions. If file is already open, reuse existing sessionId instead of opening again. IMPORTANT: Before closing, check 'list' action - wait for canClose=true (no active operations). If show=true was used, confirm with user before closing visible Excel windows. TIMEOUT: Open/create default to 120 seconds. Use timeout_seconds to customize slow workbook startup or prompt-heavy files. Operations timing out trigger aggressive cleanup and may leave Excel in inconsistent state. IRM/AIP FILES: Files protected with Azure Information Protection are detected automatically. They are opened as read-only with Excel forced visible for credential authentication. Use 'test' action first to check isIrmProtected before attempting to open.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The file operation to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "open",
+            "close",
+            "create",
+            "close-workbook",
+            "test"
+          ]
+        },
+        "path": {
+          "description": "Full Windows path to Excel file (.xlsx or .xlsm). ASK USER for the path - do not guess or use placeholder usernames. Required for: open, create, test",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "session_id": {
+          "description": "Session ID returned from 'open' or 'create'. Required for: close. Used by all other tools.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "save": {
+          "description": "Whether to save changes when closing. Default: false (discard changes)",
+          "type": "boolean",
+          "default": false
+        },
+        "show": {
+          "description": "Whether to make Excel window visible. Default: false (hidden automation)",
+          "type": "boolean",
+          "default": false
+        },
+        "timeout_seconds": {
+          "description": "Maximum time in seconds for opening/creating the session and for operations in this session. Default: 120. Range: 10-3600. Used for: open, create",
+          "type": "integer",
+          "default": 120
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "annotations": {
+      "title": "File Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "session",
+      "requiresSession": false
+    }
+  },
+  {
+    "name": "connection",
+    "title": "Data Connection Operations",
+    "description": "Data connections (OLEDB, ODBC, ODC import). TEXT/WEB/CSV: Use powerquery instead. Power Query connections auto-redirect to powerquery. TIMEOUT: 30 min auto-timeout for refresh/loadto.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "view",
+            "create",
+            "refresh",
+            "delete",
+            "load-to",
+            "get-properties",
+            "set-properties",
+            "test"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "connection_name": {
+          "description": "(required for: view, create, refresh, delete, load-to, get-properties, set-properties, test)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "connection_string": {
+          "description": "(required for: create)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "command_text": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "description": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "timeout_seconds": {
+          "description": "Timeout in seconds",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "sheet_name": {
+          "description": "(required for: load-to)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "background_query": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "refresh_on_file_open": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "save_password": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "refresh_period": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Data Connection Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "query",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "pivottable",
+    "title": "PivotTable Operations",
+    "description": "PivotTable lifecycle: create from various sources, list, read, refresh, delete. BEST PRACTICE: Use list before creating. Prefer refresh over delete+recreate to preserve field configs. REFRESH: Call after configuring fields with pivottable_field. LAYOUT: 0=Compact (default), 1=Tabular (best for export), 2=Outline. CREATE: create-from-range, create-from-table, create-from-datamodel. TIMEOUT: 5 min for DataModel. STYLING: PivotTable visual styles are not supported by this API. Do not apply range_format to PivotTable cells — cell formatting is overwritten on the next refresh. Use pivottable_field for field management, pivottable_calc for calculated fields.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "read",
+            "create-from-range",
+            "create-from-table",
+            "create-from-datamodel",
+            "delete",
+            "refresh"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "pivot_table_name": {
+          "description": "(required for: read, create-from-range, create-from-table, create-from-datamodel, delete, refresh)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_sheet": {
+          "description": "(required for: create-from-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_range": {
+          "description": "(required for: create-from-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "destination_sheet": {
+          "description": "(required for: create-from-range, create-from-table, create-from-datamodel)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "destination_cell": {
+          "description": "(required for: create-from-range, create-from-table, create-from-datamodel)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "table_name": {
+          "description": "(required for: create-from-table, create-from-datamodel)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "timeout_seconds": {
+          "description": "Timeout in seconds",
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "PivotTable Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "worksheet",
+    "title": "Worksheet Operations",
+    "description": "Worksheet lifecycle: create, rename, copy, delete, move. RENAME: Use old_name plus new_name. ATOMIC OPERATIONS: copy-to-file and move-to-file don't require a session (open/close automatically). POSITIONING: Use before OR after (not both) to place sheet relative to another. Use worksheet_style for tab colors and visibility.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "rename",
+            "copy",
+            "delete",
+            "move",
+            "copy-to-file",
+            "move-to-file"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' or 'create'. Required for same-workbook actions: list, create, rename, delete, move, and copy. Not used by copy-to-file or move-to-file.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "sheet_name": {
+          "description": "Worksheet name for create, delete, and move.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "old_name": {
+          "description": "Current worksheet name for rename.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_name": {
+          "description": "Source worksheet name for copy within the same workbook.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_name": {
+          "description": "Target worksheet name for copy within the same workbook.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_name": {
+          "description": "New worksheet name for rename.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "file_path": {
+          "description": "Optional workbook path when the current batch session has multiple open workbooks.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_file": {
+          "description": "Source workbook path for copy-to-file and move-to-file.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_sheet": {
+          "description": "Source worksheet name for copy-to-file and move-to-file.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_file": {
+          "description": "Target workbook path for copy-to-file and move-to-file.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_sheet_name": {
+          "description": "Optional new worksheet name when using copy-to-file. If omitted, the copied sheet keeps its original name.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "before_sheet": {
+          "description": "Optional position control for move, copy-to-file, or move-to-file: insert before this worksheet.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "after_sheet": {
+          "description": "Optional position control for move, copy-to-file, or move-to-file: insert after this worksheet.",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "annotations": {
+      "title": "Worksheet Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "structure",
+      "requiresSession": false
+    }
+  },
+  {
+    "name": "table",
+    "title": "Table Operations",
+    "description": "Excel Tables (ListObjects) - lifecycle and data operations. CONVERT TO TABLE: When user asks to 'format as table', 'create a table', 'put data in an Excel Table', or 'use a table' — use table(action: 'create') on the data range. Excel Tables provide built-in alternating row colors, automatic filter arrows, structured references, and automatic expansion. WORKFLOW: write data to range first, then table(action: 'create') to convert. STYLING: Pass tableStyle on create (TableStyleLight1-21, TableStyleMedium1-28, TableStyleDark1-11) or use set-style action later — these are the ONLY ways to style a table. Never apply range_format to table header or data rows — it conflicts with the table style system. BEST PRACTICE: List before creating, prefer append/resize/rename over delete+recreate. WARNING: Deleting tables used as PivotTable sources or in Data Model breaks those objects. DATA MODEL: add-to-datamodel to load into Power Pivot, then datamodel for DAX measures. APPEND: rows (inline JSON 2D array) or rowsFile (.json/.csv). Use table_column for filtering/sorting/columns.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "create",
+            "rename",
+            "delete",
+            "read",
+            "resize",
+            "toggle-totals",
+            "set-column-total",
+            "append",
+            "get-data",
+            "set-style",
+            "add-to-data-model",
+            "create-from-dax",
+            "update-dax",
+            "get-dax"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required for: create, create-from-dax)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "table_name": {
+          "description": "(required for: create, rename, delete, read, resize, toggle-totals, set-column-total, append, get-data, set-style, add-to-data-model, create-from-dax, update-dax, get-dax)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required for: create)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "has_headers": {
+          "type": "boolean",
+          "default": true
+        },
+        "table_style": {
+          "description": "(required for: set-style)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_name": {
+          "description": "(required for: rename)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_range": {
+          "description": "(required for: resize)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "show_totals": {
+          "description": "(required for: toggle-totals)",
+          "type": "boolean",
+          "default": false
+        },
+        "column_name": {
+          "description": "(required for: set-column-total)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "total_function": {
+          "description": "(required for: set-column-total)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {},
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "rows_file": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "visible_only": {
+          "type": "boolean",
+          "default": false
+        },
+        "strip_bracket_column_names": {
+          "type": "boolean",
+          "default": false
+        },
+        "dax_query": {
+          "description": "(required for: create-from-dax, update-dax)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "target_cell": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Table Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "range_edit",
+    "title": "Range Edit Operations",
+    "description": "Range editing: insert/delete cells, rows, columns; find/replace text; sort data. INSERT/DELETE CELLS: shiftDirection controls cell movement (Down/Right for insert, Up/Left for delete). INSERT/DELETE ROWS: Use row range like 5:10. COLUMNS: Use column range like B:D. FIND: Returns up to 10 matches with total count, optional case/cell matching. REPLACE: Modifies all matches by default (replaceAll=true). SORT: sortColumns array of {columnIndex, ascending}, 1-based indices relative to range.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "insert-cells",
+            "delete-cells",
+            "insert-rows",
+            "delete-rows",
+            "insert-columns",
+            "delete-columns",
+            "find",
+            "replace",
+            "sort"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "insert_shift": {
+          "description": "(required for: insert-cells)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "delete_shift": {
+          "description": "(required for: delete-cells)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "search_value": {
+          "description": "(required for: find)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "find_options": {
+          "description": "(required for: find)",
+          "type": "object",
+          "properties": {
+            "matchCase": {
+              "type": "boolean"
+            },
+            "matchEntireCell": {
+              "type": "boolean"
+            },
+            "searchFormulas": {
+              "type": "boolean"
+            },
+            "searchValues": {
+              "type": "boolean"
+            },
+            "searchComments": {
+              "type": "boolean"
+            }
+          },
+          "default": null,
+          "nullable": true
+        },
+        "find_value": {
+          "description": "(required for: replace)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "replace_value": {
+          "description": "(required for: replace)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "replace_options": {
+          "description": "(required for: replace)",
+          "type": "object",
+          "properties": {
+            "replaceAll": {
+              "type": "boolean"
+            },
+            "matchCase": {
+              "type": "boolean"
+            },
+            "matchEntireCell": {
+              "type": "boolean"
+            },
+            "searchFormulas": {
+              "type": "boolean"
+            },
+            "searchValues": {
+              "type": "boolean"
+            },
+            "searchComments": {
+              "type": "boolean"
+            }
+          },
+          "default": null,
+          "nullable": true
+        },
+        "sort_columns": {
+          "description": "(required for: sort)",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "columnIndex": {
+                "type": "integer"
+              },
+              "ascending": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "has_headers": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Range Edit Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "table_column",
+    "title": "Table Column Operations",
+    "description": "Table column, filtering, and sorting operations. FILTERING: apply-filter (criteria like >100, =Active), apply-filter-values (JSON array of exact values), clear-filters, get-filters. SORTING: sort (single column), sort-multi (JSON array of {columnName, ascending}). COLUMNS: add-column, remove-column, rename-column. NUMBER FORMATS: US locale codes (#,##0.00, 0%, yyyy-mm-dd). Use table for lifecycle and data operations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "apply-filter",
+            "apply-filter-values",
+            "clear-filters",
+            "get-filters",
+            "add-column",
+            "remove-column",
+            "rename-column",
+            "get-structured-reference",
+            "sort",
+            "sort-multi",
+            "get-column-number-format",
+            "set-column-number-format"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "table_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "column_name": {
+          "description": "(required for: apply-filter, apply-filter-values, add-column, remove-column, sort, get-column-number-format, set-column-number-format)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "criteria": {
+          "description": "(required for: apply-filter)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "values": {
+          "description": "(required for: apply-filter-values) (JSON array, e.g., '[\"value1\",\"value2\"]')",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "position": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "old_name": {
+          "description": "(required for: rename-column)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "new_name": {
+          "description": "(required for: rename-column)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "region": {
+          "description": "(required for: get-structured-reference)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "ascending": {
+          "type": "boolean",
+          "default": true
+        },
+        "sort_columns": {
+          "description": "(required for: sort-multi)",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "columnName": {
+                "type": "string",
+                "nullable": true
+              },
+              "ascending": {
+                "type": "boolean"
+              }
+            },
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "format_code": {
+          "description": "(required for: set-column-number-format)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Table Column Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "worksheet_style",
+    "title": "Worksheet Style Operations",
+    "description": "Worksheet styling: tab colors and visibility. TAB COLORS: RGB values 0-255 each for custom tab colors. VISIBILITY: visible (normal), hidden (accessible via Format > Sheet > Unhide), veryhidden (only accessible via VBA). Use worksheet for lifecycle operations.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "set-tab-color",
+            "get-tab-color",
+            "clear-tab-color",
+            "set-visibility",
+            "get-visibility",
+            "show",
+            "hide",
+            "very-hide"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "red": {
+          "description": "(required for: set-tab-color)",
+          "type": "integer",
+          "default": 0
+        },
+        "green": {
+          "description": "(required for: set-tab-color)",
+          "type": "integer",
+          "default": 0
+        },
+        "blue": {
+          "description": "(required for: set-tab-color)",
+          "type": "integer",
+          "default": 0
+        },
+        "visibility": {
+          "description": "(required for: set-visibility)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Worksheet Style Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "structure",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "window",
+    "title": "Window Management",
+    "description": "Control Excel window visibility, position, state, and status bar. show/hide Excel, bring to front, reposition, maximize/minimize, set status bar text. VISIBILITY: 'show' makes Excel visible AND brings to front. 'hide' hides it. WINDOW STATE: normal, minimized, maximized. ARRANGE presets: left-half, right-half, top-half, bottom-half, center, full-screen. STATUS BAR: set-status-bar displays feedback text, clear-status-bar restores default.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "show",
+            "hide",
+            "bring-to-front",
+            "get-info",
+            "set-state",
+            "set-position",
+            "arrange",
+            "set-status-bar",
+            "clear-status-bar"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "window_state": {
+          "description": "(required for: set-state)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "left": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "top": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "width": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "height": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "preset": {
+          "description": "(required for: arrange)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "text": {
+          "description": "(required for: set-status-bar)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Window Management",
+      "destructiveHint": false
+    },
+    "_meta": {
+      "category": "settings",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "range_format",
+    "title": "Range Format Operations",
+    "description": "Range formatting: styles, custom visual formatting, data validation, merge, auto-fit. set-style: Named styles (Good/Bad/Neutral have fills and are theme-aware; Heading 1/2/3 for document hierarchy; Normal to reset). NOTE: Heading styles do NOT include a fill colour — use format-range for coloured header rows. format-range: Custom formatting (bold, fillColor, fontColor, alignment, borders) — pass ALL properties IN ONE CALL, do not call multiple times for same range. format-ranges: Apply one shared formatting payload to multiple ranges on the same worksheet. Validate all target ranges first; if any target is invalid, nothing is formatted. COLORS: Hex #RRGGBB. FONT: size in points, alignment left/center/right, top/middle/bottom. DATA VALIDATION: Types list/whole/decimal/date/time/textLength/custom. For list: formula1 is source (=$A$1:$A$10 or \"A,B,C\"). MERGE: Only top-left cell value preserved. TABLES: For Excel Table visual styling use table(action:'set-style') — do not apply range_format to table header or data rows, table style manages all table formatting. PIVOTTABLES: Do not apply range_format to PivotTable cells — formatting is overwritten on the next refresh.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "set-style",
+            "get-style",
+            "format-range",
+            "format-ranges",
+            "validate-range",
+            "get-validation",
+            "remove-validation",
+            "auto-fit-columns",
+            "auto-fit-rows",
+            "merge-cells",
+            "unmerge-cells",
+            "get-merge-info",
+            "set-column-width",
+            "set-row-height"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "sheet_name": {
+          "description": "(required)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required for: set-style, get-style, format-range, validate-range, get-validation, remove-validation, auto-fit-columns, auto-fit-rows, merge-cells, unmerge-cells, get-merge-info, set-column-width, set-row-height)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "style_name": {
+          "description": "(required for: set-style)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "font_name": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "font_size": {
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "bold": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "italic": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "underline": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "font_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "fill_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "border_style": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "border_color": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "border_weight": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "horizontal_alignment": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "vertical_alignment": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "wrap_text": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "orientation": {
+          "type": "integer",
+          "default": null,
+          "nullable": true
+        },
+        "range_addresses": {
+          "description": "(required for: format-ranges)",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "nullable": true
+          },
+          "default": null,
+          "nullable": true
+        },
+        "number_format": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "validation_type": {
+          "description": "(required for: validate-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "validation_operator": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formula1": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "formula2": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "show_input_message": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "input_title": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "input_message": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "show_error_alert": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "error_style": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "error_title": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "error_message": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "ignore_blank": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "show_dropdown": {
+          "type": "boolean",
+          "default": null,
+          "nullable": true
+        },
+        "column_width": {
+          "description": "(required for: set-column-width)",
+          "type": "number",
+          "default": null,
+          "nullable": true
+        },
+        "row_height": {
+          "description": "(required for: set-row-height)",
+          "type": "number",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Range Format Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "data",
+      "requiresSession": true
+    }
+  },
+  {
+    "name": "chart",
+    "title": "Chart Operations",
+    "description": "Chart lifecycle - create, read, move, and delete embedded charts. POSITIONING: targetRange='F2:K15' (PREFERRED, cell-relative) or left/top (points, 72pts=1in) or OMIT BOTH for auto-positioning below content. COLLISION DETECTION: Automatically warns if chart overlaps data or other charts. CHART TYPES: 70+ types (ColumnClustered, Line, Pie, Bar, Area, XYScatter, etc.). CREATE: create-from-range (cell range), create-from-table (Excel Table), create-from-pivottable (linked PivotChart). Use chart_config for series, titles, legends, and styling.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "description": "The action to perform",
+          "type": "string",
+          "enum": [
+            "list",
+            "read",
+            "create-from-range",
+            "create-from-table",
+            "create-from-pivottable",
+            "delete",
+            "move",
+            "fit-to-range"
+          ]
+        },
+        "session_id": {
+          "description": "Session ID from file 'open' action",
+          "type": "string"
+        },
+        "chart_name": {
+          "description": "(required for: read, delete, move, fit-to-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "sheet_name": {
+          "description": "(required for: create-from-range, create-from-table, create-from-pivottable, fit-to-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "source_range_address": {
+          "description": "(required for: create-from-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "chart_type": {
+          "description": "(required for: create-from-range, create-from-table, create-from-pivottable)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "left": {
+          "type": "number",
+          "default": 0,
+          "nullable": true
+        },
+        "top": {
+          "type": "number",
+          "default": 0,
+          "nullable": true
+        },
+        "width": {
+          "type": "number",
+          "default": 400,
+          "nullable": true
+        },
+        "height": {
+          "type": "number",
+          "default": 300,
+          "nullable": true
+        },
+        "target_range": {
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "table_name": {
+          "description": "(required for: create-from-table)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "pivot_table_name": {
+          "description": "(required for: create-from-pivottable)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        },
+        "range_address": {
+          "description": "(required for: fit-to-range)",
+          "type": "string",
+          "default": null,
+          "nullable": true
+        }
+      },
+      "required": [
+        "action",
+        "session_id"
+      ]
+    },
+    "annotations": {
+      "title": "Chart Operations",
+      "destructiveHint": true
+    },
+    "_meta": {
+      "category": "analysis",
+      "requiresSession": true
+    }
+  }
+]

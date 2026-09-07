@@ -1,25 +1,85 @@
 # workbook-open
 
-Register an Excel workbook so that subsequent tools can target it.
+Open, create, test, and close Excel workbooks.
 
 ## Tool
 
-`excel_open_workbook`
+`file`
 
-## Parameters
+## Open a workbook
 
 ```json
 {
-  "filePath": "D:\\work\\book.xlsm",
-  "workbookId": "book"
+  "action": "open",
+  "path": "D:\\work\\book.xlsm"
 }
 ```
 
-- `filePath` (required): full path to the Excel file. The file must already be open in Excel, or Excel must be able to open it.
-- `workbookId` (optional): ID used in later tool calls. Defaults to the file name without extension.
+- `path` (required): full path to the Excel file.
+
+### Returns
+
+- `session_id`: a string identifier required by all subsequent tool calls.
+
+## Create empty workbook
+
+```json
+{
+  "action": "create",
+  "path": "D:\\work\\new.xlsx",
+  "format": "xlsx"
+}
+```
+
+- `format`: `xlsx` | `xlsm`
+
+## Test workbook access
+
+```json
+{
+  "action": "test",
+  "path": "D:\\work\\book.xlsx"
+}
+```
+
+- Returns `isIrmProtected` flag for IRM/AIP-protected files.
+
+## List active sessions
+
+```json
+{
+  "action": "list"
+}
+```
+
+## Close session
+
+```json
+{
+  "action": "close",
+  "session_id": "abc123",
+  "save": true
+}
+```
+
+- `save` (optional): `true` to save changes before closing.
+
+## Close workbook without quitting Excel
+
+```json
+{
+  "action": "close-workbook",
+  "session_id": "abc123",
+  "save": true
+}
+```
 
 ## Notes
 
 - Supported extensions: `.xlsm`, `.xlsb`, `.xlam`, `.xls`, `.xlsx`.
+- **If the file is already open in Excel**, `open` attaches to the running instance and returns a session — it does NOT start a second Excel process.
 - If the file is not already open, the server attempts to open it via Excel COM.
-- A `localDir` can be associated with the workbook for sync operations.
+- IRM/AIP-protected files are opened read-only with Excel visible for credential authentication.
+- Always pass the returned `session_id` to all subsequent tools.
+- Call `file(close)` when done to persist changes and release the session.
+- **`file(list)` only shows sessions opened through this MCP server.** It does NOT detect manually opened Excel files. Always use `file(open, path)` to connect.

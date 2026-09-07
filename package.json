@@ -109,6 +109,10 @@
       {
         "command": "excelVba.syncSkills",
         "title": "Excel VBA: 同步 Skill 到工作区"
+      },
+      {
+        "command": "excelVba.copyGlobalMcpConfig",
+        "title": "Excel VBA: 复制全局 MCP 配置到剪贴板"
       }
     ],
     "configuration": {
@@ -132,7 +136,7 @@
         "excelVba.localServiceUrl": {
           "type": "string",
           "default": "",
-          "description": "预留：本地 HTTP 服务地址（当前版本直接使用 PowerShell COM，无需填写）"
+          "description": "预留：本地服务地址（当前版本通过 mcp-server-excel 直接通信，无需填写）"
         }
       }
     },
@@ -150,11 +154,10 @@
   },
   "scripts": {
     "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
-    "compile:server": "esbuild ./server/index.ts --bundle --outfile=dist/mcp-server.js --format=cjs --platform=node --target=node18 --minify",
-    "compile:server:exe": "pkg ./dist/mcp-server.js --targets node18-win-x64 --output ./dist/mcp-server.exe",
     "compile:uninstall": "esbuild ./src/uninstall.ts --bundle --outfile=dist/uninstall.js --format=cjs --platform=node --target=node18 --minify",
-    "build": "npm run compile && npm run compile:server && npm run compile:server:exe && npm run compile:uninstall",
-    "package": "npm run build && vsce package --allow-missing-repository",
+    "download:mcp-server": "node tools/download-mcp-server.js",
+    "build": "npm run compile && npm run compile:uninstall",
+    "package": "npm run build && npm run download:mcp-server && vsce package --allow-missing-repository",
     "vscode:prepublish": "npm run build",
     "vscode:uninstall": "node ./dist/uninstall.js"
   },

@@ -17,13 +17,13 @@ import { basename, join, resolve } from "path";
 import { mkdir, writeFile, readFile, readdir } from "fs/promises";
 
 import {
+  buildExcelAttachScript,
   ensureExcelRunning,
   escapePowerShellSingleQuoted,
   runPowerShell,
-  sleep,
   type ExcelComResult,
 } from "../runtime/powershell";
-import { runMacroWithDialogHandling, resumeMacroRun, listExcelDialogs, clickExcelDialog, fillDialogInput } from "./vbaMacroRunner";
+import { runMacroWithDialogHandling, listExcelDialogs, clickExcelDialog, fillDialogInput } from "./vbaMacroRunner";
 
 /** 单元格格式 */
 export interface CellFormat {
@@ -84,18 +84,20 @@ function escapeNewlineForPs(value: string): string {
 }
 
 export class VbaClient {
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    private readonly excelProcessId?: number
+  ) {}
 
   /** 检查 Excel 是否可访问 VBAProject，返回错误信息或 null */
   async checkAccess(): Promise<string | null> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck.message;
     const script = `
 $ErrorActionPreference = "Stop"
-$excel = $null
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { Write-Output "WB_NOT_FOUND"; exit }
@@ -107,13 +109,6 @@ try {
         Write-Output "VBA_ACCESS_DENIED"
     } else {
         Write-Output "ERROR:$msg"
-    }
-} finally {
-    if ($excel -ne $null) {
-        [void][System.Runtime.Interopservices.Marshal]::ReleaseComObject($excel)
-        $excel = $null
-        [GC]::Collect()
-        [GC]::WaitForPendingFinalizers()
     }
 }
 `;
@@ -129,8 +124,8 @@ try {
     return output.startsWith("ERROR:") ? output.slice(6) : "Excel COM 调用失败，请检查 Excel 是否正常运行。";
   }
 
-  /** 尝试在 Excel 中打开目标工作簿（单试一次） */
-  private async tryOpenWorkbookInExcelOnce(): Promise<ExcelComResult> {
+  /** 尝试在 Excel 中打开目标工作簿。Excel 未运行时会自动启动并显示窗口。返回的 details.pid 为 Excel 进程 ID。 */
+  async openWorkbookInExcel(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
     const absPath = this.filePath.replace(/\//g, "\\");
     const script = `
@@ -148,7 +143,7 @@ function Jr-OpenWorkbook {
     $excel = $null
     $started = $false
     try {
-        $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+        ${buildExcelAttachScript(this.excelProcessId)}
     } catch {
         $excel = New-Object -ComObject Excel.Application
         $excel.Visible = $true
@@ -162,7 +157,7 @@ function Jr-OpenWorkbook {
         $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(absPath)}')
     }
     $excel.Visible = $true
-    $pidValue = [uint32]0
+    $pidValue = 0
     $hwnd = $excel.Hwnd
     $hwndPtr = [IntPtr]::new([long]$hwnd)
     [void][JrExcelPid]::GetWindowThreadProcessId($hwndPtr, [ref]$pidValue)
@@ -195,20 +190,6 @@ Jr-OpenWorkbook
     return result;
   }
 
-  /** 尝试在 Excel 中打开目标工作簿，失败时自动重试 3 次。Excel 未运行时会自动启动并显示窗口。返回的 details.pid 为 Excel 进程 ID。 */
-  async openWorkbookInExcel(): Promise<ExcelComResult> {
-    const maxRetries = 3;
-    let lastResult: ExcelComResult | undefined;
-    for (let i = 0; i < maxRetries; i++) {
-      lastResult = await this.tryOpenWorkbookInExcelOnce();
-      if (lastResult.success) return lastResult;
-      if (i < maxRetries - 1) {
-        await sleep(1000);
-      }
-    }
-    return lastResult!;
-  }
-
   // ============================================================
   // 资源读取
   // ============================================================
@@ -216,12 +197,12 @@ Jr-OpenWorkbook
   /** 获取工作簿资源（VBComponents 列表） */
   async getResources(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -240,11 +221,7 @@ try {
     }
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; workbookPath = '${escapePowerShellSingleQuoted(this.filePath)}'; items = $result }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -252,12 +229,12 @@ try {
 /** 一次性返回工作簿全景信息（工作表、VBA 资源、宏、代码行数统计） */
   async inspectWorkbook(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -310,11 +287,7 @@ try {
         macros = $macros
     }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -322,12 +295,12 @@ try {
   /** 读取所有 VBA 组件代码 */
   async getAllComponentCode(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -345,11 +318,7 @@ try {
     }
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; items = $items }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -357,12 +326,12 @@ try {
   /** 读取单个组件代码 */
   async getComponentCode(componentName: string): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -378,11 +347,7 @@ try {
     $codeBase64 = [System.Convert]::ToBase64String($codeBytes)
     $payload = @{ workbookName = '${escapePowerShellSingleQuoted(wbName)}'; componentName = '${escapePowerShellSingleQuoted(componentName)}'; componentType = $typeName; codeBase64 = $codeBase64 }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     const result = await runPowerShell(script);
     if (result.success && result.output) {
@@ -403,12 +368,12 @@ try {
   /** 获取当前 VBE 所有组件代码的 SHA256 checksum，用于检测 VBE 是否有变更 */
   async getVbeCodeChecksum(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -426,11 +391,7 @@ try {
     $hash = $sha256.ComputeHash($bytes)
     $hashHex = [BitConverter]::ToString($hash) -replace "-", ""
     Write-Output $hashHex
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -443,7 +404,7 @@ try {
   async syncVbeToLocal(localDir: string): Promise<ExcelComResult> {
     const absDir = resolve(localDir);
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
 
     // 确保目录结构（与 VBE 资源管理器原生分类保持一致）
@@ -456,14 +417,16 @@ try {
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(absPath)}') }
 
     $baseDir = '${escapePowerShellSingleQuoted(absDir.replace(/\//g, "\\"))}'
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-    $gbk = [System.Text.Encoding]::GetEncoding("GBK")
+    $gbk = $null
+    try { $gbk = [System.Text.Encoding]::GetEncoding("GBK") } catch { $gbk = [System.Text.Encoding]::Default }
+    if ($gbk -eq $null) { $gbk = [System.Text.Encoding]::UTF8 }
     $components = @()
 
     function Write-ComponentFile([string]$folderPath, [string]$fileName, [string]$ext, $comp, [int]$compType, [string]$relFile) {
@@ -576,6 +539,7 @@ try {
         $components += [pscustomobject]@{ name = $compName; type = $typeName; file = $relFile }
     }
 
+    Write-Output "开始清理本地孤儿文件"
     # 清理本地存在但 VBE 中已不存在的文件（删除同步：VBE → 本地）
     $expectedFiles = @{}
     foreach ($c in $components) {
@@ -638,21 +602,29 @@ try {
         Write-Output "清理旧文件: ThisWorkbook.cls"
     }
 
+    Write-Output "生成 workbook.json 清单"
     $manifest = @{
         workbookName = '${escapePowerShellSingleQuoted(wbName)}'
         workbookPath = '${escapePowerShellSingleQuoted(this.filePath)}'
         lastSyncAt = (Get-Date).ToString("o")
         components = $components
     }
-    $manifestJson = ConvertTo-Json $manifest -Depth 5
-    $manifestFile = Join-Path $baseDir "workbook.json"
-    [System.IO.File]::WriteAllText($manifestFile, $manifestJson, $utf8NoBom)
+    try {
+        $manifestJson = ConvertTo-Json $manifest -Depth 5
+        $manifestFile = Join-Path $baseDir "workbook.json"
+        [System.IO.File]::WriteAllText($manifestFile, $manifestJson, $utf8NoBom)
+        Write-Output "workbook.json 写入成功"
+    } catch {
+        $inner = $_ | Out-String
+        Write-Output "workbook.json 写入失败: $inner"
+        throw
+    }
     Write-Output ""
     Write-Output "同步完成: 共 $($components.Count) 个组件, 删除 $deleted 个本地文件"
 } catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
+    $err = $_ | Out-String
+    Write-Output "SCRIPT_ERROR: $err"
+    Write-Error $err
 }
 `;
     const result = await runPowerShell(script);
@@ -667,14 +639,14 @@ try {
   async syncLocalToVbe(localDir: string): Promise<ExcelComResult> {
     const absDir = resolve(localDir);
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
 
     const absPath = this.filePath.replace(/\//g, "\\");
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(absPath)}') }
@@ -911,11 +883,7 @@ try {
 
     Write-Output ""
     Write-Output "同步完成: 新增 $added / 更新 $updated / 跳过 $skipped / 未变 $unchanged / 删除 $vbeDeleted"
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     const result = await runPowerShell(script);
     if (result.success) {
@@ -945,12 +913,12 @@ try {
   /** 列出所有宏（解析各组件中的 Sub/Function） */
   async listMacros(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -969,11 +937,7 @@ try {
     }
     $payload = @{ macros = $macros }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -981,19 +945,13 @@ try {
   /** 运行无参数宏 */
   async runMacro(
     macroName: string,
-    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean; autoFillInputs?: string[]; interactive?: boolean } = {}
+    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean } = {}
   ): Promise<ExcelComResult> {
     return runMacroWithDialogHandling(this.filePath, macroName, {
       timeoutMs: options.timeoutMs,
       captureResultRange: options.captureResultRange,
-      autoFillInputs: options.autoFillInputs,
-      interactive: options.interactive,
+      excelProcessId: this.excelProcessId,
     });
-  }
-
-  /** 恢复暂停的宏执行 */
-  async resumeMacro(sessionId: string, extendTimeoutMs?: number): Promise<ExcelComResult> {
-    return resumeMacroRun(sessionId, { extendTimeoutMs });
   }
 
   /** 列出当前 Excel/VBA 弹窗 */
@@ -1018,12 +976,12 @@ try {
   /** 列出工作表 */
   async listSheets(): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -1037,11 +995,7 @@ try {
     }
     $payload = @{ sheets = $sheets }
     Write-Output (ConvertTo-Json $payload -Depth 5 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -1049,13 +1003,13 @@ try {
   /** 读取 UsedRange；sheetName 为空时使用第一个工作表 */
   async readUsedRange(sheetName: string | undefined): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -1077,11 +1031,7 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ sheetName = $actualSheet; address = $address; values = $values }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1089,13 +1039,13 @@ try {
   /** 读取指定 Range；sheetName 为空时使用第一个工作表 */
   async readRange(sheetName: string | undefined, address: string): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\"))}') }
@@ -1116,11 +1066,7 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}'; values = $values }
     Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1132,7 +1078,7 @@ try {
   /** 新建工作表 */
   async createSheet(name: string, options?: { before?: string; after?: string }): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const beforeLit = options?.before ? `'${escapePowerShellSingleQuoted(options.before)}'` : "$null";
     const afterLit = options?.after ? `'${escapePowerShellSingleQuoted(options.after)}'` : "$null";
@@ -1140,7 +1086,7 @@ try {
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1151,11 +1097,7 @@ try {
     $wb.Save()
     $payload = @{ success = $true; sheetName = '${nameLit}'; message = "工作表 ${nameLit} 已创建" }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$beforeLit/g, beforeLit).replace(/\$afterLit/g, afterLit);
     return runPowerShell(script);
   }
@@ -1163,12 +1105,12 @@ try {
   /** 删除工作表 */
   async deleteSheet(name: string): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1177,11 +1119,7 @@ try {
     $wb.Save()
     $payload = @{ success = $true; sheetName = '${escapePowerShellSingleQuoted(name)}'; message = "工作表已删除" }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -1189,12 +1127,12 @@ try {
   /** 重命名工作表 */
   async renameSheet(oldName: string, newName: string): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1203,11 +1141,7 @@ try {
     $wb.Save()
     $payload = @{ success = $true; oldName = '${escapePowerShellSingleQuoted(oldName)}'; newName = '${escapePowerShellSingleQuoted(newName)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
@@ -1215,14 +1149,14 @@ try {
   /** 设置单个单元格值；sheetName 为空时使用第一个工作表 */
   async setCellValue(sheetName: string | undefined, address: string, value: CellValue): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const valueLit = value === null ? "$null" : `'${escapePowerShellSingleQuoted(String(value))}'`;
     const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1232,11 +1166,7 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$valueLit/g, valueLit).replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1244,7 +1174,7 @@ try {
   /** 批量设置 Range 值，values 为二维数组；sheetName 为空时使用第一个工作表 */
   async setRangeValues(sheetName: string | undefined, startAddress: string, values: CellValue[][]): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const rows = values.length;
     const cols = rows > 0 ? values[0].length : 0;
@@ -1257,7 +1187,7 @@ try {
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1279,11 +1209,7 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = [string]$rng.Address($false, $false) }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1291,13 +1217,13 @@ try {
   /** 清空指定 Range；sheetName 为空时使用第一个工作表 */
   async clearRange(sheetName: string | undefined, address: string): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
     const script = `
 $ErrorActionPreference = "Stop"
 try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1307,11 +1233,7 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
@@ -1319,7 +1241,7 @@ try {
   /** 设置单元格格式；sheetName 为空时使用第一个工作表 */
   async setCellFormat(sheetName: string | undefined, address: string, format: CellFormat): Promise<ExcelComResult> {
     const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
     if (preCheck) return preCheck;
     const fmt = format;
     const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
@@ -1337,7 +1259,7 @@ try {
 $ErrorActionPreference = "Stop"
 try {
     Add-Type -AssemblyName System.Drawing
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
+    ${buildExcelAttachScript(this.excelProcessId)}
     $wb = $null
     foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
     if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
@@ -1348,274 +1270,14 @@ try {
     $actualSheet = [string]$ws.Name
     $payload = @{ success = $true; sheetName = $actualSheet; address = '${escapePowerShellSingleQuoted(address)}' }
     Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `.replace(/\$sheetLit/g, sheetLit);
     return runPowerShell(script);
   }
 
-  /** 列出工作表中的超级表（Excel Table / ListObject） */
-  async listTables(sheetName: string | undefined): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
-    $tables = @()
-    foreach ($tbl in $ws.ListObjects) {
-        $tables += [pscustomobject]@{
-            name = [string]$tbl.Name
-            range = [string]$tbl.Range.Address($false, $false)
-            headerRowRange = [string]$tbl.HeaderRowRange.Address($false, $false)
-            dataBodyRange = if ($tbl.DataBodyRange) { [string]$tbl.DataBodyRange.Address($false, $false) } else { $null }
-            rowCount = if ($tbl.DataBodyRange) { [int]$tbl.DataBodyRange.Rows.Count } else { 0 }
-            columnCount = [int]$tbl.ListColumns.Count
-            style = [string]$tbl.TableStyle.Name
-        }
-    }
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; tables = $tables; count = $tables.Count }
-    Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$sheetLit/g, sheetLit);
-    return runPowerShell(script);
-  }
-
-  /** 读取超级表数据 */
-  async readTable(sheetName: string | undefined, tableName: string, includeHeaders = true): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
-    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
-    $headers = @()
-    foreach ($col in $tbl.ListColumns) { $headers += [string]$col.Name }
-    $rows = @()
-    if ($tbl.DataBodyRange) {
-        $data = $tbl.DataBodyRange.Value2
-        if ($data -is [array]) {
-            $rowCount = $tbl.DataBodyRange.Rows.Count
-            $colCount = $tbl.DataBodyRange.Columns.Count
-            for ($r = 1; $r -le $rowCount; $r++) {
-                $row = @()
-                for ($c = 1; $c -le $colCount; $c++) {
-                    $v = $data[$r, $c]
-                    if ($v -eq $null) { $v = $null } else { $v = [string]$v }
-                    $row += $v
-                }
-                $rows += ,$row
-            }
-        } else {
-            $rows += ,@([string]$data)
-        }
-    }
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; headers = $headers; rows = $rows; rowCount = $rows.Count }
-    if (-not $includeHeaders) { $payload.headers = $null }
-    Write-Output (ConvertTo-Json $payload -Depth 10 -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$sheetLit/g, sheetLit).replace(/\$includeHeaders/g, includeHeaders ? "$true" : "$false");
-    return runPowerShell(script);
-  }
-
-  /** 写入超级表数据（覆盖数据主体，不含表头） */
-  async writeTable(
-    sheetName: string | undefined,
-    tableName: string,
-    data: unknown[][],
-    autoResize = true
-  ): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const rows = data.length;
-    const cols = rows > 0 ? data[0].length : 0;
-    if (rows === 0 || cols === 0) {
-      return { success: false, message: "data 不能为空数组" };
-    }
-    const jsonValues = JSON.stringify(data);
-    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
-    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
-    $values = ConvertFrom-Json '${escapePowerShellSingleQuoted(jsonValues)}'
-    $arr = New-Object 'object[,]' ${rows}, ${cols}
-    for ($r = 0; $r -lt ${rows}; $r++) {
-        for ($c = 0; $c -lt ${cols}; $c++) {
-            $v = $values[$r][$c]
-            if ($v -eq $null) { $v = "" }
-            $arr[$r, $c] = $v
-        }
-    }
-    if ($tbl.DataBodyRange) { $tbl.DataBodyRange.Delete() }
-    $startCell = $tbl.HeaderRowRange.Cells.Item(1, 1).Offset(1, 0)
-    $endCell = $ws.Cells.Item($startCell.Row + ${rows - 1}, $startCell.Column + ${cols - 1})
-    $rng = $ws.Range($startCell, $endCell)
-    $rng.Value2 = $arr
-    if ($autoResize) {
-        $tbl.Resize($rng)
-        $headerCount = $tbl.ListColumns.Count
-        if ($headerCount -gt ${cols}) {
-            for ($i = $headerCount; $i -gt ${cols}; $i--) { $tbl.ListColumns[$i].Delete() }
-        } elseif ($headerCount -lt ${cols}) {
-            for ($i = $headerCount + 1; $i -le ${cols}; $i++) { [void]$tbl.ListColumns.Add() }
-        }
-    }
-    $wb.Save()
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; rowCount = ${rows}; columnCount = ${cols} }
-    Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$sheetLit/g, sheetLit).replace(/\$autoResize/g, autoResize ? "$true" : "$false");
-    return runPowerShell(script);
-  }
-
-  /** 创建超级表 */
-  async createTable(
-    sheetName: string | undefined,
-    tableName: string,
-    address: string,
-    hasHeaders = true,
-    styleName?: string
-  ): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
-    const styleLit = styleName ? `'${escapePowerShellSingleQuoted(styleName)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
-    $rng = $ws.Range('${escapePowerShellSingleQuoted(address)}')
-    $tbl = $ws.ListObjects.Add([Microsoft.Office.Interop.Excel.XlListObjectSourceType]::xlSrcRange, $rng, $null, [Microsoft.Office.Interop.Excel.XlYesNoGuess]::${hasHeaders ? "xlYes" : "xlNo"})
-    $tbl.Name = '${escapePowerShellSingleQuoted(tableName)}'
-    if ($styleLit -ne "$null") { $tbl.TableStyle = $wb.TableStyles.Item($styleLit) }
-    $wb.Save()
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; range = [string]$tbl.Range.Address($false, $false) }
-    Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$sheetLit/g, sheetLit).replace(/\$styleLit/g, styleLit);
-    return runPowerShell(script);
-  }
-
-  /** 删除超级表 */
-  async deleteTable(sheetName: string | undefined, tableName: string, clearDataOnly = false): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const sheetLit = sheetName ? `'${escapePowerShellSingleQuoted(sheetName)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = if ($sheetLit -eq "$null") { $wb.Worksheets.Item(1) } else { $wb.Sheets.Item($sheetLit) }
-    $tbl = $ws.ListObjects.Item('${escapePowerShellSingleQuoted(tableName)}')
-    if ($clearDataOnly) {
-        if ($tbl.DataBodyRange) { $tbl.DataBodyRange.ClearContents() }
-    } else {
-        $tbl.Unlink()
-        $tbl.Delete()
-    }
-    $wb.Save()
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; tableName = '${escapePowerShellSingleQuoted(tableName)}'; clearDataOnly = $clearDataOnly }
-    Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$sheetLit/g, sheetLit).replace(/\$clearDataOnly/g, clearDataOnly ? "$true" : "$false");
-    return runPowerShell(script);
-  }
-
-  /** 设置工作表页签格式（颜色、可见性） */
-  async setSheetTabFormat(
-    sheetName: string,
-    options: { color?: string; visible?: "Visible" | "Hidden" | "VeryHidden" }
-  ): Promise<ExcelComResult> {
-    const wbName = basename(this.filePath);
-    const preCheck = await ensureExcelRunning(wbName);
-    if (preCheck) return preCheck;
-    const colorLit = options.color ? `'${escapePowerShellSingleQuoted(options.color)}'` : "$null";
-    const visibleLit = options.visible ? `'${escapePowerShellSingleQuoted(options.visible)}'` : "$null";
-    const script = `
-$ErrorActionPreference = "Stop"
-try {
-    Add-Type -AssemblyName System.Drawing
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $wb = $null
-    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
-    if ($wb -eq $null) { $wb = $excel.Workbooks.Open('${escapePowerShellSingleQuoted(this.filePath.replace(/\//g, "\\\\"))}') }
-    $ws = $wb.Sheets.Item('${escapePowerShellSingleQuoted(sheetName)}')
-    if ($colorLit -ne "$null") { $ws.Tab.Color = [System.Drawing.ColorTranslator]::FromHtml($colorLit) }
-    if ($visibleLit -ne "$null") { $ws.Visible = [Microsoft.Office.Interop.Excel.XlSheetVisibility]::xlSheet$visibleLit }
-    $wb.Save()
-    $actualSheet = [string]$ws.Name
-    $payload = @{ success = $true; sheetName = $actualSheet; color = '${escapePowerShellSingleQuoted(options.color || "")}'; visible = '${escapePowerShellSingleQuoted(options.visible || "")}' }
-    Write-Output (ConvertTo-Json $payload -Compress)
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
-`.replace(/\$colorLit/g, colorLit).replace(/\$visibleLit/g, visibleLit);
-    return runPowerShell(script);
-  }
-
-  /** 设置 Excel 主窗口置顶或取消置顶（通过 COM 获取当前工作簿实例的 HWND 后调用 Win32 API） */
+  /** 设置 Excel 主窗口置顶或取消置顶（不经过 COM，直接调用 Win32 API） */
   async setWindowTopMost(onTop: boolean): Promise<ExcelComResult> {
     const action = onTop ? "置顶" : "取消置顶";
-    const wbName = basename(this.filePath);
     const script = `
 $ErrorActionPreference = "Stop"
 try {
@@ -1625,47 +1287,32 @@ try {
     public class Win32TopMost {
         [DllImport(\"user32.dll\", SetLastError = true)]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-        [DllImport(\"user32.dll\", SetLastError = true)]
-        public static extern bool IsWindow(IntPtr hWnd);
-        [DllImport(\"user32.dll\", SetLastError = true)]
-        public static extern bool SetForegroundWindow(IntPtr hWnd);
-        [DllImport(\"user32.dll\", SetLastError = true)]
-        public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
     }
 "@
-
-    $excel = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Excel.Application")
-    $targetWbName = '${escapePowerShellSingleQuoted(wbName)}'
-    $found = $false
-    foreach ($w in $excel.Workbooks) {
-        if ($w.Name -eq $targetWbName) { $found = $true; break }
-    }
-    if (-not $found) { throw "未找到工作簿：$targetWbName" }
-
-    $hwnd = [IntPtr]::new([long]$excel.Hwnd)
-    if (-not [Win32TopMost]::IsWindow($hwnd)) { throw "Excel 窗口句柄无效：$hwnd" }
-
     $HWND_TOPMOST = [IntPtr]::new(-1)
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
     $SWP_NOMOVE = 0x0002
     $SWP_NOSIZE = 0x0001
 
-    # 激活窗口确保置顶命令生效，但不改变窗口的显示状态（最大化/最小化保持原样）
-    [void][Win32TopMost]::SetForegroundWindow($hwnd)
+    $targetPid = ${this.excelProcessId || 0}
+    $proc = $null
+    if ($targetPid -gt 0) {
+      $proc = Get-Process excel | Where-Object { $_.Id -eq $targetPid -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    }
+    if ($proc -eq $null) {
+      $proc = Get-Process excel | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+    }
+    if ($proc -eq $null) { throw "未找到 Excel 进程" }
+    $hwnd = $proc.MainWindowHandle
 
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $flags = $SWP_NOMOVE -bor $SWP_NOSIZE
-    $result = [Win32TopMost]::SetWindowPos($hwnd, $target, 0, 0, 0, 0, $flags)
-    if (-not $result) {
-        $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
-        throw "SetWindowPos 调用失败，错误码：$err，HWND：$hwnd"
+    $result = [Win32TopMost]::SetWindowPos([IntPtr]::new([long]$hwnd), $target, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE)
+    if ($result) {
+        Write-Output "Excel 窗口已${action}"
+    } else {
+        throw "SetWindowPos 调用失败"
     }
-    Write-Output "Excel 窗口已${action} (HWND=$hwnd)"
-} catch {
-    $errMsg = [string]$_.Exception.Message
-    $errStack = [string]$_.ScriptStackTrace
-    Write-Error ("ERROR: " + $errMsg + "\`nSTACK: " + $errStack)
-}
+} catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);
   }
