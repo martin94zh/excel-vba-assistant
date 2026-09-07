@@ -107,11 +107,18 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 ## 5. 安装插件
 
-### 方式 A：从 .vsix 安装（推荐）
+### 方式 A：从 GitHub Release 下载安装（推荐）
 
-1. 下载 `excel-vba-assistant-0.8.6.vsix`
-2. 在 Trae / VS Code 中执行 `Extensions: Install from VSIX...`
-3. 选择该文件安装
+**下载地址**：[excel-vba-assistant-0.8.6.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.8.6/excel-vba-assistant-0.8.6.vsix)
+
+或前往 [Releases 页面](https://github.com/martin94zh/excel-vba-assistant/releases) 下载最新版本。
+
+安装步骤：
+
+1. 从上述链接下载 `.vsix` 文件
+2. 在 Trae / VS Code 中按 `Ctrl+Shift+P`，执行 **`Extensions: Install from VSIX...`**
+3. 选择下载的 `excel-vba-assistant-0.8.6.vsix` 文件
+4. 安装完成后重新加载窗口即可
 
 > 安装包已内置 `mcp-excel.exe`（来自 `sbroenne/mcp-server-excel`），**无需联网下载**，也无需用户本机安装 Node.js。
 
