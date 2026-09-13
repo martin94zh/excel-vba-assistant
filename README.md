@@ -2,27 +2,34 @@
 
 Excel VBA 本地同步器 + AI 编程桥接器：在 Trae / VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目。
 
-本插件基于 [`sbroenne/mcp-server-excel`](https://github.com/sbroenne/mcp-server-excel) MCP 服务器构建，所有 Excel/VBA 操作均通过 Model Context Protocol (MCP) 完成，保留原有 UI 与交互习惯的同时，完整继承 `mcp-server-excel` 的 **16 类工具、230+ 操作**，覆盖 VBA、工作表、单元格、格式、Excel 表格、数据透视表、图表、Power Query、DAX 数据模型、命名区域、数据连接、切片器、条件格式、截图、窗口置顶等全部能力。
+本插件的 AI 自动化能力基于 [`sbroenne/mcp-server-excel`](https://github.com/sbroenne/mcp-server-excel) 2.0.8 的 **CLI（excelcli.exe）**：插件通过共享后台 daemon 打开工作簿（**Excel 前台可见**），AI 用 `excelcli` 命令操作**同一会话**，覆盖 **31 组命令、326 操作**（VBA、工作表、单元格、格式、Excel 表格、数据透视表、图表、Power Query、DAX 数据模型、命名区域、数据连接、切片器、条件格式、截图、窗口管理等）；插件自身通过 COM 附着同一 Excel 实例，负责 VBE ↔ 本地双向同步、宏运行与状态管理。
 
-> 当前版本：**v0.8.6**
+> 当前版本：**v0.9.0**
 
 ---
 
 ## 1. 项目介绍
 
-### MCP 核心来源
+### 架构来源
 
-本插件的 Excel/VBA 自动化能力**完全基于 [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel)** 构建。`mcp-server-excel` 是一个开源的 Model Context Protocol (MCP) 服务器，通过 COM 接口与 Excel 桌面版交互，提供了 16 类工具、230+ 操作。
+本插件的 AI 自动化能力**基于 [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel) 2.0.8 的 CLI** 构建。上游同时提供 MCP Server 与 CLI 两种形态；本项目选用 **CLI（excelcli.exe）**，原因有二：
+
+1. **独占访问**（Excel COM 层限制）：一个工作簿同一时间只能被一个持有者打开。
+2. **CLI 的后台 daemon 是共享单例**：所有 `excelcli` 进程连接同一 daemon，会话跨进程持久（MCP Server 则是每个客户端进程内私有服务，会话互不可见）。
+
+因此插件与 AI 可以协作同一工作簿：**插件负责打开（前台可见），AI 负责操作（同一会话），插件负责同步（COM 伴随）**。
+
+**工作簿归属模型（重要）**：用户在插件中选择文件 → 插件执行 `excelcli session open <文件> --show`，Excel 前台可见地打开；AI 用任意新起的 excelcli 进程以 `--session <id>` 操作同一工作簿；断开时插件执行 `session close --save`。若文件已被用户手动打开，插件会提示接管（关闭后由 daemon 重新打开）或保持打开（仅本地同步）。
 
 本插件在其基础上增加了：
 - VBE ↔ 本地文件双向同步
 - 自动同步与文件监听
 - 可视化控制面板与状态栏
-- AI Skill 指引文档
-- VBA 宏运行与管理
+- AI Skill 指引文档（内置官方 31 组命令文档）
+- VBA 宏运行与管理（含 Excel 弹窗自动处理）
 - Excel 窗口置顶
 
-**核心 MCP 工具（17 类，230+ 操作）均来自 `mcp-server-excel`**，包括：`file`、`worksheet`、`range`、`table`、`pivottable`、`chart`、`powerquery`、`datamodel`、`vba`、`slicer`、`conditionalformat`、`screenshot`、`window` 等。
+**CLI 命令组（31 组，326 操作）均来自 `mcp-server-excel` 2.0.8**，包括：`session`、`workbook`、`sheet`、`range`、`rangeedit`、`rangeformat`、`rangelink`、`table`、`tablecolumn`、`pivottable`、`pivottablefield`、`pivottablecalc`、`chart`、`chartconfig`、`powerquery`、`querytable`、`datamodel`、`datamodelrelationship`、`vba`、`slicer`、`conditionalformat`、`screenshot`、`window`、`connection`、`namedrange`、`calculationmode`、`worksheetstyle`、`analysis`、`drawing`、`xmlmap`、`pythoninexcel`。
 
 ### 核心能力
 
@@ -33,12 +40,12 @@ Excel VBA 本地同步器 + AI 编程桥接器：在 Trae / VS Code 中管理、
 - **双向自动同步**：开启后，本地文件保存自动写回 VBE，VBE 代码变更自动导出到本地。变更按时间顺序排队处理，避免冲突覆盖。
 - **本地文件监听**：本地 VBA 文件保存后防抖 300ms 自动同步到 VBE。
 - **VBE 轮询检测**：每 3 秒检测一次 VBE 代码变更，自动导出到本地。
-- **宏执行**：列出工作簿中的所有 Sub/Function，运行无参数宏。
-- **完整 Excel 自动化**：通过 MCP 调用 `mcp-server-excel` 的 230+ 操作，几乎覆盖 Excel 桌面版的全部可编程对象。
+- **宏执行**：列出工作簿中的所有 Sub/Function，运行无参数宏（内置 Excel 弹窗检测与交互处理）。
+- **完整 Excel 自动化**：AI 通过 excelcli 调用 326 操作，几乎覆盖 Excel 桌面版的全部可编程对象。
 - **状态栏**：在 VS Code 状态栏实时显示连接/同步/错误状态。
 - **输出日志**：所有操作记录到 OutputChannel，便于排查问题。
-- **MCP Server**：集成 `mcp-server-excel`，选择 Excel 文件并同步后自动向工作区 `.trae/mcp.json` 写入配置，Trae AI 可直接调用 Excel/VBA 工具。
-- **AI 指引（Skills）**：扩展内置 `skills/` 文档，AI 调用 MCP 工具前会先读取对应操作说明。
+- **AI 编程桥接器**：集成 `excelcli.exe`（ExcelMcp 2.0.8 CLI），工作簿由共享 daemon 打开并前台可见，AI 经同一会话操作，插件经 COM 伴随同步。
+- **AI 指引（Skills）**：扩展内置 `skills/` 文档（含官方 excel-cli 31 组命令文档），自动同步到工作区 `.trae/skills/` 并注入 excelcli 实际路径。
 
 ### 本地同步目录结构
 
@@ -56,9 +63,9 @@ syncDirectory/
 
 ---
 
-## 2. 完整能力清单（基于 mcp-server-excel）
+## 2. 完整能力清单（基于 excelcli / mcp-server-excel 2.0.8）
 
-插件通过 MCP 暴露了 `mcp-server-excel` 的全部 17 类工具，共 230+ 操作：
+AI 通过 excelcli 命令使用全部 31 组命令，共 326 操作：
 
 | 工具类别 | 主要能力 | 操作数 |
 |---|---|---|
@@ -80,7 +87,7 @@ syncDirectory/
 | `screenshot` | 截取区域或工作表为 PNG 图片 | 2 |
 | `window` | Excel 窗口显示/隐藏、置顶、状态、位置、排列、状态栏 | 9 |
 
-> 以上操作全部通过 MCP 调用 `mcp-server-excel` 完成。常用操作在插件代码中有类型化封装，其余操作可通过通用 `callTool` 直接调用。
+> 以上操作全部通过 excelcli 命令完成（`excelcli -q <命令组> <动作> --session <id> ...`），完整语法见内置的官方 excel-cli Skill 文档。
 
 ---
 
@@ -109,7 +116,7 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 ### 方式 A：从 GitHub Release 下载安装（推荐）
 
-**下载地址**：[excel-vba-assistant-0.8.6.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.8.6/excel-vba-assistant-0.8.6.vsix)
+**下载地址**：[excel-vba-assistant-0.9.0.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.0/excel-vba-assistant-0.9.0.vsix)
 
 或前往 [Releases 页面](https://github.com/martin94zh/excel-vba-assistant/releases) 下载最新版本。
 
@@ -117,10 +124,10 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 1. 从上述链接下载 `.vsix` 文件
 2. 在 Trae / VS Code 中按 `Ctrl+Shift+P`，执行 **`Extensions: Install from VSIX...`**
-3. 选择下载的 `excel-vba-assistant-0.8.6.vsix` 文件
+3. 选择下载的 `excel-vba-assistant-0.9.0.vsix` 文件
 4. 安装完成后重新加载窗口即可
 
-> 安装包已内置 `mcp-excel.exe`（来自 `sbroenne/mcp-server-excel`），**无需联网下载**，也无需用户本机安装 Node.js。
+> 安装包已内置 `excelcli.exe`（来自 `sbroenne/mcp-server-excel` 2.0.8），**无需联网下载**，也无需用户本机安装 Node.js。
 
 ### 方式 B：本地构建
 
@@ -134,21 +141,22 @@ npm run package
 
 - `dist/extension.js` — VS Code 扩展主入口
 - `dist/uninstall.js` — 卸载清理脚本
-- `dist/mcp-excel.exe` — 已嵌入的 MCP Server
+- `dist/excelcli.exe` — 已嵌入的 Excel CLI（daemon 模式）
 
 ---
 
 ## 6. 快速开始
 
 1. 安装插件后，左侧活动栏会出现 **Excel VBA** 图标
-2. **先在 Excel 中手动打开目标工作簿**
-3. 点击图标打开控制面板
-4. 点击「选择 Excel 文件」，选择已打开的 `.xlsm` / `.xlsb` / `.xlam` / `.xls` 文件
-5. 插件会确认文件已打开，自动创建同步目录并执行 **VBE → 本地 同步**
-6. 同步完成后，自动开启自动同步，并自动写入 MCP 配置
-7. 在 Trae 的 AI 对话中即可直接调用 `file`、`range`、`vba`、`table` 等 MCP 工具
+2. 点击图标打开控制面板
+3. 点击「选择 Excel 文件」，选择目标 `.xlsm` / `.xlsb` / `.xlam` 文件
+4. 插件通过 excelcli **前台可见地打开 Excel**（状态栏变绿）——用户全程看得到工作簿
+5. 设置同步目录（如「Excel相同目录」），执行 **VBE → 本地 同步**，按需开启自动同步
+6. 在 Trae/VS Code 的 AI 对话中直接提出要求（如"把 Sheet1 的 A1:B5 填入数据并做图表"），
+   AI 会通过 excelcli 操作**同一个前台 Excel**，你实时看到每一步
+7. AI 修改 VBA 时前台 VBE 同步变化；你在 Excel 里手改 VBA 也会自动出现在编辑器中
 
-> 插件不会自动打开 Excel，也不会自动检测 Excel 是否关闭。关闭 Excel 后请手动点击控制面板「断开 Excel」清理状态。
+> 工作簿由 excelcli 的共享 daemon **独占**打开。若文件已被手动打开，插件会提示：接管关闭后由 daemon 重开（AI 可操作），或保持打开（仅本地同步）。断开请点击控制面板「断开 Excel」（自动保存）。
 
 ---
 
@@ -161,7 +169,7 @@ npm run package
 - **Excel 文件**：当前连接的工作簿路径
 - **VBA 同步目录**：本地同步目录路径
 - **选择文件**：选择 Excel 工作簿
-- **断开 Excel**：强制重置服务状态，取消置顶，移除工作区目录，清理 MCP 配置
+- **断开 Excel**：通过 excelcli 保存并关闭工作簿（COM 兜底），重置服务状态，取消置顶，移除工作区目录
 - **选择目录**：手动选择本地同步目录
 - **Excel相同目录**：使用 Excel 文件同路径下的同名文件夹作为同步目录
 
@@ -187,7 +195,10 @@ npm run package
 1. **控制面板按钮**：点击活动栏 Excel VBA 图标 → 控制面板中点击「选择 Excel 文件」
 2. **命令面板**：`Ctrl+Shift+P` → `Excel VBA: 选择 Excel 文件`
 
-选择后会弹出文件选择对话框。**请确保选中的文件已在 Excel 中手动打开**。如果未检测到该文件在 Excel 中打开，插件会提示你手动打开后重试，不会自动启动 Excel。
+选择后会弹出文件选择对话框。插件会检测该文件是否已在 Excel 中打开：
+
+- **已在其他实例打开**：可选择「关闭并让 AI 重新打开」（daemon 重新以可见模式打开，AI 可完整操作）或「保持打开」（仅本地同步）。
+- **未打开**：直接由插件通过 excelcli 前台可见地打开，AI 可立即操作。
 
 ---
 
@@ -294,13 +305,12 @@ npm run package
 
 ### 手动断开 Excel
 
-插件不再自动检测 Excel 是否关闭。关闭 Excel 或切换工作簿前，请点击控制面板中的「断开 Excel」：
+插件不会在 Excel 被外部关闭时自动感知。关闭 Excel 或切换工作簿前，请点击控制面板中的「断开 Excel」：
 
-- 关闭 MCP session
+- 通过 excelcli 关闭会话并保存工作簿（COM 兜底）
 - 取消 Excel 窗口置顶
 - 从工作区移除同步目录
 - 删除自动创建的同步目录
-- 清理 MCP 配置中的环境变量（保留 server 条目）
 
 如果你希望长期保留解析文件，请手动选择同步目录（而非使用自动创建的目录），或点击「断开 Excel」前手动复制目录。
 
@@ -314,7 +324,7 @@ npm run package
 
 - `dist/extension.js` — 扩展主程序
 - `dist/uninstall.js` — 卸载清理脚本
-- `dist/mcp-excel.exe` — 已嵌入的 MCP Server
+- `dist/excelcli.exe` — 已嵌入的 Excel CLI（daemon 模式）
 - `resources/` — 图标和 Webview 资源
 - `skills/` — AI 指引文档
 - `package.json` / `README.md` / `LICENSE`
@@ -325,11 +335,11 @@ npm run package
 
 **可以。**
 
-MCP Server 已打包为 `dist/mcp-excel.exe`，用户无需安装 Node.js 即可使用全部功能。
+excelcli 已打包为 `dist/excelcli.exe`，用户无需安装 Node.js 即可使用全部功能。
 
-### 安装插件后 MCP 就可用吗？
+### 安装插件后 AI 就能操作 Excel 吗？
 
-插件激活时会自动向当前工作区的 `.trae/mcp.json` 写入基础 MCP 配置。选择 Excel 文件并设置同步目录后，AI 即可调用工具。
+插件激活时会自动把 Skill 文档（含 excelcli 实际路径）同步到当前工作区的 `.trae/skills/`。选择 Excel 文件（插件前台打开）并设置同步目录后，AI 即可通过 excelcli 操作该工作簿。
 
 ---
 
@@ -364,67 +374,46 @@ MCP Server 已打包为 `dist/mcp-excel.exe`，用户无需安装 Node.js 即可
 
 ---
 
-## 17. 如何使用 MCP Server
+## 17. 如何让 AI 操作 Excel（excelcli）
 
-MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
+插件内置 ExcelMcp 2.0.8 的 CLI（`dist/excelcli.exe`）。工作簿由共享后台 daemon 打开并持有，AI 用 excelcli 命令操作同一会话——**Excel 前台可见，用户实时看到 AI 的每一步操作**。
 
-### 自动配置
+### 零配置
 
-本插件已内置 `mcp-server-excel`。**选择 Excel 文件并完成同步后，插件会自动向当前工作区的 `.trae/mcp.json` 写入 MCP 配置**，无需手动编辑。
-
-示例配置：
-
-```json
-{
-  "mcpServers": {
-    "excel-mcp": {
-      "command": "C:/Users/<user>/.vscode/extensions/excel-vba-assistant-0.8.6/dist/mcp-excel.exe",
-      "args": []
-    }
-  }
-}
-```
+无需任何手动配置。插件激活时会把 Skill 文档自动同步到 `.trae/skills/`（包含 excelcli 的实际路径与全部命令说明）。若想在终端手动验证，点击控制面板的「复制 excelcli 路径与常用命令」即可。
 
 ### 使用流程
 
-1. 调用 `file(open, filePath)` 打开工作簿，获得 `sessionId`
-2. 将 `sessionId` 传给后续所有工具调用
-3. 按需选择以下工具类别：
-   - **VBA**：`vba(list/view/import/update/delete/run)`
-   - **工作表**：`worksheet(list/create/delete/rename/copy/move)`
-   - **单元格**：`range(get-values/set-values/get-formulas/set-formulas/clear-contents)`
-   - **格式**：`range_format(set-format/format-ranges/merge-cells/add-validation)`
-   - **Excel 表格**：`table(create/delete/get-data/append-rows/add-to-datamodel)`
-   - **数据透视表**：`pivottable(create/add-field/set-field-function/refresh)`
-   - **图表**：`chart(create/set-title/set-data-source/add-trendline)`
-   - **Power Query**：`powerquery(create/update/evaluate/refresh/load-to)`
-   - **DAX 数据模型**：`datamodel(create-measure/update-measure/evaluate/create-relationship)`
-   - **命名区域**：`namedrange(read/write/create/update/delete)`
-   - **数据连接**：`connection(create/test/refresh/set-properties)`
-   - **切片器**：`slicer(create/set-selection/delete)`
-   - **条件格式**：`conditionalformat(add-rule/clear-rules)`
-   - **截图**：`screenshot(capture/capture-sheet)`
-   - **窗口**：`window(show/hide/set-topmost/set-position/arrange)`
-   - **计算**：`calculation_mode(set-mode/calculate)`
-4. 完成后调用 `file(close, sessionId, save=true)` 保存并释放会话
+```powershell
+# 1. 查看当前会话（插件选择文件后，会话已存在）
+excelcli -q session list
+
+# 2. 携带 sessionId 操作工作簿（31 组命令，326 操作）
+excelcli -q sheet list --session <id>
+excelcli -q range set-values --session <id> --sheet Sheet1 --range A1:B1 --values '[["姓名","年龄"]]'
+excelcli -q vba list --session <id>
+excelcli -q vba run --session <id> --procedure-name Module1.Main
+excelcli -q screenshot capture --session <id> ...
+```
+
+> 控制面板的「复制 excelcli 路径与常用命令」会给出完整路径模板，终端中使用 `& '<路径>' -q ...` 调用。
 
 ### AI 指引（Skills）
 
-插件内置 `skills/` 目录，包含各功能域的操作指引。Trae AI 在调用 MCP 工具前会先读取 `skills/SKILL.md` 和相关文档，遵循以下约定：
+插件内置两组 Skill 并自动同步到工作区 `.trae/skills/`：
 
-- 先读取指引，再调用工具
-- 危险操作需要确认
-- 工作表/工作簿对象模块只更新，不新建/删除
-- 批量读取优先使用 `vba(list)` 遍历
-- 大数据量写入前使用 `calculation_mode(set-mode, manual)` 提升性能
+- **excel-vba-assistant**：插件编排说明（会话模型、同步边界、关键规则）
+- **excel-cli**：官方 31 组命令 / 326 操作完整文档（含反模式、工作流、批量模式）
 
-### 推荐工作流
+AI 遵循的约定：先读指引再操作；危险操作确认后再执行；工作表/工作簿对象模块只更新代码、不增删；批量写入用二维数组；10+ 条命令用 `batch --input commands.json`。
 
-1. AI 调用 `vba(list)` 了解 VBA 项目结构
-2. AI 调用 `vba(view)` 读取要修改的组件
-3. AI 调用 `vba(update)` 写入新代码
-4. AI 调用 `vba(run)` 执行宏
-5. AI 调用 `range(get-values)` 或 `screenshot` 验证结果
+### 推荐工作流（AI 侧）
+
+1. `session list` 找到插件已打开的会话（不要重复 open）
+2. `sheet list` / `table list` 发现结构
+3. `range set-values` 写数据 → `rangeformat` 美化 → `chart create` 出图
+4. `vba view` → `vba update` 修改 VBA（前台 VBE 实时可见）
+5. `screenshot capture` 截图验证结果
 
 ---
 
@@ -486,7 +475,7 @@ MCP Server 让 AI 通过 Model Context Protocol 直接调用 Excel/VBA 工具。
 
 ```powershell
 npm run package
-# 生成 excel-vba-assistant-0.8.6.vsix
+# 生成 excel-vba-assistant-0.9.0.vsix
 ```
 
 ### 查看日志

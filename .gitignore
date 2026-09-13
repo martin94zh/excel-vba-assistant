@@ -32,3 +32,8 @@ Thumbs.db
 
 # Trae runtime generated files
 .trae/
+
+# 本地测试与构建产物
+build/
+test/
+.trae/skills/

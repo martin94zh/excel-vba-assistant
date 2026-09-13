@@ -160,6 +160,10 @@ public static class ExcelComUtils {
 
   [DllImport("oleacc.dll")]
   public static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint dwObjectID, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
 }
 "@
 
@@ -177,9 +181,22 @@ public static class ExcelComUtils {
 
 $excel = $null
 if ($foundHwnd -ne [IntPtr]::Zero) {
+  # OBJID_NATIVEOM 必须挂在 EXCEL7 子窗口（工作簿窗口）上；对 XLMAIN 顶级窗口调用会返回 E_FAIL。
+  # 若找不到 EXCEL7（如无可见工作簿窗口），退回 XLMAIN。
+  $omHwnd = [IntPtr]::Zero
+  [ExcelComUtils]::EnumChildWindows($foundHwnd, {
+    param($hWnd, $lParam)
+    $sb2 = New-Object System.Text.StringBuilder 256
+    [void][ExcelComUtils]::GetClassName($hWnd, $sb2, $sb2.Capacity)
+    if ($sb2.ToString() -eq "EXCEL7") { $script:omHwnd = $hWnd; return $false }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  $targetHwnd = if ($omHwnd -ne [IntPtr]::Zero) { $omHwnd } else { $foundHwnd }
   $guid = [Guid]::Parse("00020400-0000-0000-C000-000000000046")
   $obj = $null
-  $hr = [ExcelComUtils]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
+  # OBJID_NATIVEOM = 0xFFFFFFF0；PS 会把该字面量解析为 Int32(-16) 导致 UInt32 转换失败，
+  # 必须用十进制显式转换
+  $hr = [ExcelComUtils]::AccessibleObjectFromWindow($targetHwnd, [UInt32]4294967280, [ref]$guid, [ref]$obj)
   if ($hr -eq 0) {
     $excel = $obj.Application
   } else {
@@ -224,7 +241,10 @@ try {
     return { success: false, message: "未检测到正在运行的 Excel。" };
   }
   if (output === "WB_NOT_FOUND") {
-    return { success: false, message: `Excel 已运行，但未找到文件「${wbName}」。请在 Excel 中打开该文件后重试。` };
+    return {
+      success: false,
+      message: `Excel 已运行，但未找到文件「${wbName}」。请让 AI 执行 file(open) 打开该工作簿，或在 Excel 中手动打开后重试。`,
+    };
   }
   return null;
 }

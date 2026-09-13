@@ -8,3 +8,9 @@ tools/**
 !dist/extension.js
 !dist/*.exe
 .trae/**
+test/**
+build/**
+PROJECT_HEALTH.md
+VERIFY_PLAN.md
+FEASIBILITY.md
+EXPERIMENT_ATTACH.md

@@ -89,50 +89,20 @@ if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
 export async function findExcelProcessIdByWindow(workbookPath: string): Promise<number> {
   try {
     const path = await import("path");
-    const wbName = path.basename(workbookPath);
-    const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath));
+    const wbName = path.basename(workbookPath).replace(/'/g, "''");
+    const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath)).replace(/'/g, "''");
+    // 注意：此前用 EnumWindows + 脚本块委托实现，但脚本块被 marshal 后运行在独立作用域，
+    // 回调内的变量赋值不会传回外层（foundPid 永远为 0）。Get-Process 方式无此问题，
+    // 且可见/最小化窗口的 MainWindowTitle 均非空。
     const script = `
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public static class ExcelWindowFinder {
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-  [DllImport("user32.dll")]
-  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-  [DllImport("user32.dll")]
-  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-  [DllImport("user32.dll")]
-  public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll")]
-  public static extern bool IsIconic(IntPtr hWnd);
-}
-"@
-$targetName = '${wbName.replace(/'/g, "''")}'
-$targetNameNoExt = '${wbNameNoExt.replace(/'/g, "''")}'
-$foundPid = 0
-[ExcelWindowFinder]::EnumWindows({
-  param($hWnd, $lParam)
-  $visible = [ExcelWindowFinder]::IsWindowVisible($hWnd)
-  $iconic = [ExcelWindowFinder]::IsIconic($hWnd)
-  if (-not $visible -and -not $iconic) { return $true }
-  $sb = New-Object System.Text.StringBuilder 512
-  [void][ExcelWindowFinder]::GetWindowText($hWnd, $sb, 512)
-  $title = $sb.ToString()
-  if ($title -like "*$targetName*" -or $title -like "*$targetNameNoExt*") {
-    $pid = [uint32]0
-    [void][ExcelWindowFinder]::GetWindowThreadProcessId($hWnd, [ref]$pid)
-    $foundPid = [int]$pid
-    return $false
-  }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-$foundPid
+$p = Get-Process EXCEL -ErrorAction SilentlyContinue | Where-Object {
+  ($_.MainWindowTitle -like '*${wbName}*') -or ($_.MainWindowTitle -like '*${wbNameNoExt}*')
+} | Select-Object -First 1
+if ($p) { $p.Id } else { 0 }
 `;
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
     const result = await execAsync(
-      `powershell -NoProfile -Command "${script.replace(/"/g, '\\"').replace(/\n/g, "; ")}"`,
+      `powershell -NoProfile -EncodedCommand ${encoded}`,
       { timeout: 10000 }
     );
     const pid = parseInt((result.stdout || "").trim(), 10);
@@ -283,6 +253,7 @@ public static class ExcelWindowUtils {
   [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
   [DllImport("oleacc.dll")] public static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint dwObjectID, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
 }
 "@
 $targetPid = ${pid}
@@ -301,9 +272,20 @@ $foundHwnd = [IntPtr]::Zero
 
 $excel = $null
 if ($foundHwnd -ne [IntPtr]::Zero) {
+  # OBJID_NATIVEOM 必须挂在 EXCEL7 子窗口上（对 XLMAIN 调用会返回 E_FAIL）
+  $omHwnd = [IntPtr]::Zero
+  [ExcelWindowUtils]::EnumChildWindows($foundHwnd, {
+    param($hWnd, $lParam)
+    $sb2 = New-Object System.Text.StringBuilder 256
+    [void][ExcelWindowUtils]::GetClassName($hWnd, $sb2, $sb2.Capacity)
+    if ($sb2.ToString() -eq "EXCEL7") { $script:omHwnd = $hWnd; return $false }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  $targetHwnd = if ($omHwnd -ne [IntPtr]::Zero) { $omHwnd } else { $foundHwnd }
   $guid = [Guid]::Parse("00020400-0000-0000-C000-000000000046")
   $obj = $null
-  $hr = [ExcelWindowUtils]::AccessibleObjectFromWindow($foundHwnd, 0xFFFFFFF0, [ref]$guid, [ref]$obj)
+  # 0xFFFFFFF0 会被 PS 解析为 Int32(-16)，必须十进制显式转 UInt32
+  $hr = [ExcelWindowUtils]::AccessibleObjectFromWindow($targetHwnd, [UInt32]4294967280, [ref]$guid, [ref]$obj)
   if ($hr -eq 0) {
     $excel = $obj.Application
   }

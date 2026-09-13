@@ -26,8 +26,6 @@ export class StatusBarManager {
   }
 
   private apply(status: ServiceStatus): void {
-    const state = this.stateManager.getAll();
-    const mcpSuffix = state.mcpSessionActive ? " · MCP" : "";
     this.item.backgroundColor = undefined;
     switch (status) {
       case "unknown":
@@ -35,19 +33,19 @@ export class StatusBarManager {
         this.item.color = undefined;
         break;
       case "starting":
-        this.item.text = `$(sync) VBE 同步${mcpSuffix}`;
+        this.item.text = "$(sync) VBE 同步";
         this.item.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
         break;
       case "connected":
-        this.item.text = `$(circle-filled) VBE 同步${mcpSuffix}`;
+        this.item.text = "$(circle-filled) VBE 同步";
         this.item.color = new vscode.ThemeColor("testing.iconPassed");
         break;
       case "syncing":
-        this.item.text = `$(sync~spin) VBE 同步${mcpSuffix}`;
+        this.item.text = "$(sync~spin) VBE 同步";
         this.item.color = new vscode.ThemeColor("statusBarItem.prominentForeground");
         break;
       case "synced":
-        this.item.text = `$(check) VBE 同步${mcpSuffix}`;
+        this.item.text = "$(check) VBE 同步";
         this.item.color = new vscode.ThemeColor("testing.iconPassed");
         break;
       case "disconnected":
@@ -70,7 +68,7 @@ export class StatusBarManager {
     lines.push(`- Excel 文件：${state.workbookPath || "未选择"}`);
     lines.push(`- 同步目录：${state.syncDirectory || "未设置"}`);
     lines.push(`- Excel PID：${state.excelProcessId > 0 ? state.excelProcessId : "未记录"}`);
-    lines.push(`- MCP 会话：${state.mcpSessionActive ? "活跃" : "未激活"}`);
+    lines.push(`- AI 桥接：excelcli daemon（AI 用任意 excelcli 进程操作同一会话，插件经 COM 伴随）`);
     lines.push(`- 服务状态：${this.statusLabel(status)}`);
     lines.push(`- 上次同步方向：${state.lastSyncDirection === "vbe-to-local" ? "VBE → 本地" : state.lastSyncDirection === "local-to-vbe" ? "本地 → VBE" : "无"}`);
     lines.push(`- 上次同步时间：${this.formatSyncTime(state.lastSyncAt)}`);

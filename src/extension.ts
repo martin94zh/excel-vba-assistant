@@ -6,7 +6,18 @@
  * 2. 处理 Webview 消息（选择文件/目录、同步、开关）
  * 3. 自动同步：监听本地 *.bas/*.cls/*.frm 变化，防抖后写回 VBE
  * 4. 自动执行 VBA：本地 → VBE 同步后，确认运行宏
- * 5. 管理 mcp-server-excel 子进程，让 Trae AI 通过 MCP 调用 Excel/VBA 工具
+ *
+ * 工作簿归属模型（CLI daemon 单持有者）：
+ * ExcelMcp 2.x 的 excelcli.exe 通过共享后台 daemon（命名管道服务）持有 Excel，
+ * 所有 excelcli 进程连接同一 daemon、会话跨进程持久。因此：
+ * - 用户在插件中选择文件 → 插件执行 `excelcli session open <file> --show`，
+ *   Excel 前台可见，会话归 daemon 所有；
+ * - AI（Trae/VS Code）用任意新起的 excelcli 进程携带 --session <id> 即可操作
+ *   同一工作簿（31 组命令 / 326 操作，含 range/vba/powerquery/datamodel 等）；
+ * - 插件通过 COM 附着同一 Excel 实例完成 VBE 双向同步、宏运行（含弹窗处理）
+ *   与窗口置顶。
+ * （不使用 MCP server：stdio 模式下每个 MCP 客户端各自持有进程内服务，
+ *   会话互不可见且独占互斥，无法满足"插件打开 + AI 操作"同会话需求。）
  */
 import * as vscode from "vscode";
 import * as path from "path";
@@ -18,28 +29,27 @@ import { StateManager } from "./state";
 import { OutputManager } from "./output/outputChannel";
 import { StatusBarManager } from "./status/statusBar";
 import { ExcelVbaPanelProvider, type WebviewMessage, type StatePayload } from "./webview";
-import { McpServerManager } from "./mcp/serverManager";
-import { ExcelClient } from "./excel/excelClient";
 import { VbaClient } from "./client/vbaClient";
-import { findLocalMcpServer } from "./native/downloader";
+import { findLocalExcelCli, runExcelCli } from "./native/cliRunner";
 import {
   findExcelPidForWorkbook,
-  listExcelPids,
   waitForProcessExit,
   terminateProcessTree,
-  findWorkbookOwnerPid,
   closeWorkbookAndQuit,
 } from "./native/processUtils";
 
 const SUPPORTED_EXCEL_EXTENSIONS = ["xlsm", "xlsb", "xlam", "xls"];
 const VBA_FILE_EXTENSIONS = [".bas", ".cls", ".frm", ".wks", ".wbk"];
-const MCP_SERVER_NAME = "excel-mcp";
 
 // 自动同步防抖毫秒数。太短容易连续触发，太长体感延迟高；300ms 在敲击停止后几乎无感知。
 const AUTO_SYNC_DEBOUNCE_MS = 300;
 
 // Excel → 本地 自动同步轮询间隔。Excel/VBE 没有直接文件系统事件，只能轮询检测变更。
 const AUTO_VBE_TO_LOCAL_INTERVAL_MS = 3000;
+
+// 等待工作簿被打开的轮询间隔与超时（AI 的 MCP server 打开，或用户手动打开）
+const OPEN_WAITER_INTERVAL_MS = 3000;
+const OPEN_WAITER_TIMEOUT_MS = 10 * 60 * 1000;
 
 interface PendingChange {
   source: "local" | "vbe";
@@ -51,11 +61,11 @@ let stateManager: StateManager;
 let output: OutputManager;
 let statusBar: StatusBarManager;
 let viewProvider: ExcelVbaPanelProvider;
-let mcpServerManager: McpServerManager;
-let excelClient: ExcelClient | undefined;
 let fileWatcher: vscode.FileSystemWatcher | undefined;
 let syncDebounceTimer: NodeJS.Timeout | undefined;
 let vbeToLocalCheckTimer: NodeJS.Timeout | undefined;
+let openWaiterTimer: NodeJS.Timeout | undefined;
+let openWaiterDeadline = 0;
 let isSyncing = false;
 let isSyncingVbeToLocal = false;
 let lastExcelAvailable = false;
@@ -96,32 +106,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // 立即推送一次已持久化的状态，避免 webview 启动时显示空白/丢失
   pushStateToWebview();
 
-  // 启动 mcp-server-excel 子进程
-  mcpServerManager = new McpServerManager(context.extensionPath);
-  mcpServerManager
-    .start()
-    .then((client) => {
-      excelClient = new ExcelClient(client);
-      output.info("mcp-server-excel 已启动");
+  // 工作簿归属模型：插件通过共享的 excelcli daemon 打开工作簿（前台可见），
+  // AI 用任意 excelcli 进程操作同一会话；插件本身经 COM 伴随同步。
+  // 激活时只做两件事：恢复连接状态、按需启动自动同步。
+  void restoreExcelConnectionStatus();
 
-      // 自动同步开关已开启时，启动双向自动同步
-      if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
-        startFileWatcher();
-        startVbeToLocalWatcher();
-      }
-
-      // 恢复时若已保存 workbookPath，验证一次 Excel 连接状态（不再自动检测关闭）
-      void restoreExcelConnectionStatus();
-
-      // 插件激活时立即写入 MCP 配置
-      void writeMcpConfig();
-    })
-    .catch((err) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      output.error(`启动 mcp-server-excel 失败：${msg}`);
-      stateManager.setRuntime({ serviceStatus: "error", lastError: msg });
-      pushStateToWebview();
-    });
+  if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
+    startFileWatcher();
+    startVbeToLocalWatcher();
+  }
 
   // 将内置 Skill 同步到当前工作区的 .trae/skills，使 Trae AI 能按需加载
   void syncBuiltinSkillsToWorkspace();
@@ -135,17 +128,49 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
     return false;
   }
 
-  const client = createVbaClient();
-  if (!client) return false;
-
   // 服务恢复前，确保 Excel 置顶处于关闭状态，避免恢复后窗口异常置顶
   if (stateManager.get("keepExcelOnTop")) {
     await restoreExcelWindowState().catch(() => {});
     await stateManager.set("keepExcelOnTop", false);
   }
 
-  // 通过 COM 验证已打开工作簿的 VBA 访问（不再自动打开 Excel）
-  const accessError = await client.checkAccess();
+  // 优先校验 excelcli daemon 会话是否仍然存活（daemon 重启后会话会失效）
+  const cliPath = getExcelCliPath();
+  const sid = stateManager.get("cliSessionId");
+  if (cliPath && sid) {
+    const listed = await runExcelCli(cliPath, ["-q", "session", "list"], 30000);
+    const sessions = (listed.data?.sessions as Array<{ sessionId?: string }> | undefined) ?? [];
+    if (listed.success && sessions.some((s) => s.sessionId === sid)) {
+      output.info(`excelcli 会话仍存活（${sid.slice(0, 8)}…），恢复连接`);
+      return await attachAndConnect(workbookPath);
+    }
+    output.warn("excelcli 会话已失效，清除后尝试按 PID 恢复");
+    await stateManager.set("cliSessionId", "");
+  }
+
+  // 定位当前持有工作簿的 Excel 实例（daemon 打开或用户手动打开，均可附着）
+  const pid = await findExcelPidForWorkbook(workbookPath);
+  if (!pid) {
+    // 工作簿尚未打开：进入等待状态，由 open-waiter 检测其被打开
+    output.info("Excel 尚未打开所选工作簿，等待其被打开（让 AI 执行 session open 或手动打开）…");
+    stateManager.setRuntime({ serviceStatus: "starting" });
+    startOpenWaiter(workbookPath);
+    pushStateToWebview();
+    return false;
+  }
+
+  return await attachAndConnect(workbookPath, pid);
+}
+
+/** 校验 VBA 访问能力并置为已连接（附着指定实例或自动定位） */
+async function attachAndConnect(workbookPath: string, knownPid?: number): Promise<boolean> {
+  const pid = knownPid ?? (await findExcelPidForWorkbook(workbookPath));
+  if (pid) {
+    await stateManager.set("excelProcessId", pid);
+  }
+
+  // 通过 COM 验证该实例的 VBA 访问能力（信任设置等）
+  const accessError = await new VbaClient(workbookPath, pid).checkAccess();
   if (accessError) {
     output.warn(`恢复连接状态时 Excel 未就绪：${accessError}`);
     stateManager.setRuntime({ lastError: accessError, serviceStatus: "error" });
@@ -159,8 +184,7 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
 
   stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
   lastExcelAvailable = true;
-  output.info("恢复连接状态：Excel 已连接");
-
+  output.info(`恢复连接状态：Excel 已连接${pid ? `（PID ${pid}）` : ""}`);
   pushStateToWebview();
   return true;
 }
@@ -168,12 +192,9 @@ async function restoreExcelConnectionStatus(): Promise<boolean> {
 export async function deactivate(): Promise<void> {
   stopFileWatcher();
   stopVbeToLocalWatcher();
-  // 扩展被禁用/重载时清理 MCP 配置
-  await removeMcpConfig();
-  // 优雅关闭 mcp-server-excel
-  if (mcpServerManager) {
-    await mcpServerManager.stop();
-  }
+  stopOpenWaiter();
+  // 扩展被禁用/重载时清理旧版 MCP 配置残留
+  await removeLegacyMcpConfig();
 }
 
 // ============================================================
@@ -219,7 +240,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   register("excelVba.openOutput", () => output.show(false));
   register("excelVba.refreshResources", () => void handleRefreshResources());
   register("excelVba.syncSkills", () => void syncBuiltinSkillsToWorkspace(true));
-  register("excelVba.copyGlobalMcpConfig", () => void copyGlobalMcpConfig());
+  register("excelVba.copyCliPath", () => void copyCliPath());
 }
 
 // ============================================================
@@ -273,8 +294,8 @@ async function handleWebviewMessage(msg: WebviewMessage): Promise<void> {
     case "syncLocalToVbe":
       await executeSync("local-to-vbe");
       break;
-    case "copyGlobalMcpConfig":
-      await copyGlobalMcpConfig();
+    case "copyCliPath":
+      await copyCliPath();
       break;
   }
 }
@@ -317,36 +338,41 @@ async function handleSelectWorkbook(): Promise<void> {
   viewProvider.refresh();
   pushStateToWebview();
 
-  // 用户选择文件后立即通过 MCP 打开 Excel
-  const excel = createExcelClient();
-  if (!excel) {
-    const msg = "MCP Server 尚未启动，无法打开 Excel";
-    output.warn(msg);
-    stateManager.setRuntime({ lastError: msg, serviceStatus: "error" });
-    vscode.window.showErrorMessage(msg);
-    pushStateToWebview();
-    return;
-  }
-
-  // 调用 MCP file(open) 之前，检测目标文件是否已被其他 Excel 实例打开
-  const conflictingOwnerPid = await findWorkbookOwnerPid(filePath);
+  // 检测目标文件是否已被其他 Excel 实例打开（独占模型下 AI 的 server 将无法 open）。
+  // 用 CommandLine + 窗口标题双信号定位，覆盖双击打开与 Excel 内部打开两种情形。
+  const conflictingOwnerPid = await findExcelPidForWorkbook(filePath);
   const currentManagedPid = stateManager.get("excelProcessId");
   if (conflictingOwnerPid && conflictingOwnerPid !== currentManagedPid) {
     const fileName = path.basename(filePath);
     const choice = await vscode.window.showWarningMessage(
-      `检测到 ${fileName} 已在另一个 Excel 实例中打开。请关闭后重试，或让插件接管（关闭当前 Excel 并由插件重新打开）。`,
+      `检测到 ${fileName} 已在另一个 Excel 实例中打开。AI 操作工作簿需要独占访问：` +
+      "关闭它并让 AI 重新打开后，AI 才能操作该文件；保持打开则仅支持本地 VBA 同步。",
       { modal: true },
-      "关闭并重新打开",
-      "取消"
+      "关闭并让 AI 重新打开",
+      "保持打开（仅本地同步）"
     );
-    if (choice !== "关闭并重新打开") {
+    if (choice === "保持打开（仅本地同步）") {
+      // 直接附着现有实例：本地同步可用，但该实例非 daemon 持有，
+      // AI 无法用 excelcli 打开同一文件（独占限制）
+      output.info(`用户选择保持现有实例（PID ${conflictingOwnerPid}），仅启用本地同步`);
+      await stateManager.set("excelProcessId", conflictingOwnerPid);
+      stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
+      lastExcelAvailable = true;
+      if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
+        startFileWatcher();
+        startVbeToLocalWatcher();
+      }
+      pushStateToWebview();
+      return;
+    }
+    if (choice !== "关闭并让 AI 重新打开") {
       output.info("用户取消接管已打开的 Excel 文件");
       await stateManager.set("workbookPath", "");
       pushStateToWebview();
       return;
     }
 
-    output.info(`用户选择接管由 PID ${conflictingOwnerPid} 打开的 Excel 实例`);
+    output.info(`用户选择关闭由 PID ${conflictingOwnerPid} 打开的 Excel 实例`);
     stateManager.setRuntime({ serviceStatus: "starting" });
     pushStateToWebview();
 
@@ -379,38 +405,56 @@ async function handleSelectWorkbook(): Promise<void> {
     }
   }
 
-  // 记录打开前的现有 Excel PID 列表，用于排除法定位 MCP 创建的新实例
-  const existingPids = await listExcelPids();
-  output.info(`打开 Excel 前已存在 ${existingPids.length} 个 EXCEL.EXE 进程`);
+  // 通过共享 daemon 打开工作簿：--show 使 Excel 前台可见，
+  // 会话由 daemon 持有，AI 之后用任意 excelcli 进程 --session <id> 操作同一工作簿
+  const cliPath = getExcelCliPath();
+  if (!cliPath) {
+    const msg = "未找到 excelcli.exe（插件安装不完整），无法打开 Excel";
+    output.error(msg);
+    stateManager.setRuntime({ lastError: msg, serviceStatus: "error" });
+    vscode.window.showErrorMessage(msg);
+    pushStateToWebview();
+    return;
+  }
 
   stateManager.setRuntime({ serviceStatus: "starting" });
   pushStateToWebview();
 
-  try {
-    await excel.openWorkbook(filePath);
-    stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
-    output.info("Excel 已通过 MCP 打开并连接");
-    lastExcelAvailable = true;
-
-    // 标记 MCP 会话为活跃
-    await stateManager.set("mcpSessionActive", true);
-
-    // 探测并记录 MCP 创建的 Excel 进程 PID
-    const pid = await findExcelPidForWorkbook(filePath, existingPids);
-    if (pid) {
-      await stateManager.set("excelProcessId", pid);
-      output.info(`已记录 Excel 进程 PID：${pid}`);
-    } else {
-      await stateManager.set("excelProcessId", 0);
-      output.warn("未能探测到 MCP 创建的 Excel 进程 PID");
-    }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    output.error(`通过 MCP 打开 Excel 失败：${msg}`);
+  output.info(`正在通过 excelcli 打开工作簿（前台可见）：${filePath}`);
+  const opened = await runExcelCli(cliPath, ["-q", "session", "open", filePath, "--show"], 120000);
+  if (!opened.success) {
+    const msg = opened.error || "excelcli 打开工作簿失败";
+    output.error(`excelcli 打开工作簿失败：${msg}`);
     stateManager.setRuntime({ lastError: msg, serviceStatus: "error" });
     vscode.window.showErrorMessage(`无法打开 Excel 文件：${msg}`);
+    pushStateToWebview();
+    return;
   }
 
+  const sessionId = String((opened.data?.sessionId as string) || "");
+  await stateManager.set("cliSessionId", sessionId);
+  output.info(`excelcli 会话已建立：${sessionId.slice(0, 8)}…（Excel 前台可见）`);
+
+  // 定位 daemon 启动的 Excel 进程并附着（COM 同步用）
+  const pid = await findExcelPidForWorkbook(filePath);
+  if (pid) {
+    await stateManager.set("excelProcessId", pid);
+    output.info(`已记录 Excel 进程 PID：${pid}`);
+  } else {
+    // Excel 窗口尚未就绪：交给 open-waiter 检测
+    startOpenWaiter(filePath);
+  }
+
+  stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
+  lastExcelAvailable = true;
+  if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
+    startFileWatcher();
+    startVbeToLocalWatcher();
+  }
+
+  vscode.window.showInformationMessage(
+    "Excel 已打开（前台可见）。直接在 AI 对话中提出要求即可，AI 会通过 excelcli 操作这个工作簿。"
+  );
   pushStateToWebview();
 }
 
@@ -435,10 +479,6 @@ async function handleUseCurrentWorkspace(): Promise<void> {
   }
   const wsPath = folders[0].uri.fsPath;
   await setSyncDirectory(wsPath, false);
-
-  if (stateManager.get("workbookPath")) {
-    await writeMcpConfig();
-  }
 }
 
 async function handleUseExcelSameDirectory(): Promise<void> {
@@ -472,18 +512,33 @@ async function handleDisconnectExcel(): Promise<void> {
   const workbookPath = stateManager.get("workbookPath");
   const excelProcessId = stateManager.get("excelProcessId");
 
-  // 第一步：立即停止所有 watcher 和轮询，避免清理过程中触发同步
+  // 第一步：立即停止所有 watcher、轮询和等待器，避免清理过程中触发同步
   stopFileWatcher();
   stopVbeToLocalWatcher();
+  stopOpenWaiter();
 
-  // 第二步：关闭 MCP session，保存并关闭工作簿
-  if (workbookPath && excelClient) {
-    try {
-      await excelClient.closeWorkbook(workbookPath, true);
-      output.info("MCP session 已关闭并保存工作簿");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      output.warn(`关闭 MCP session 失败：${msg}`);
+  // 第二步：优先通过 excelcli 关闭会话（daemon 保存并关闭工作簿），
+  // 失败时回退 COM 直接保存关闭并退出 Excel
+  if (workbookPath && excelProcessId > 0) {
+    let closed = false;
+    const cliPath = getExcelCliPath();
+    const sid = stateManager.get("cliSessionId");
+    if (cliPath && sid) {
+      const r = await runExcelCli(cliPath, ["-q", "session", "close", "--session", sid, "--save"], 60000);
+      closed = r.success;
+      if (closed) {
+        output.info("excelcli 会话已关闭并保存工作簿");
+      } else {
+        output.warn(`excelcli 关闭会话失败：${r.error ?? "未知原因"}，回退 COM 关闭`);
+      }
+    }
+    if (!closed) {
+      closed = await closeWorkbookAndQuit(excelProcessId, workbookPath);
+      if (closed) {
+        output.info("已通过 COM 保存并关闭工作簿");
+      } else {
+        output.warn(`COM 方式关闭 PID ${excelProcessId} 的 Excel 失败，稍后尝试强制终止`);
+      }
     }
   }
 
@@ -506,7 +561,7 @@ async function handleDisconnectExcel(): Promise<void> {
   }
 
   // 清空 MCP 环境变量（保留 server 条目，避免下次显示 no tools）
-  await clearMcpConfigEnv().catch(() => {});
+  await removeLegacyMcpConfig().catch(() => {});
 
   // 第四步：清空所有持久化和运行期状态
   await stateManager.set("workbookPath", "");
@@ -514,8 +569,7 @@ async function handleDisconnectExcel(): Promise<void> {
   await stateManager.set("syncDirectoryAutoCreated", false);
   await stateManager.set("previousSyncDirectory", "");
   await stateManager.set("excelProcessId", 0);
-  await stateManager.set("mcpSessionId", "");
-  await stateManager.set("mcpSessionActive", false);
+  await stateManager.set("cliSessionId", "");
   await stateManager.set("autoSync", false);
   await stateManager.set("autoRunVba", false);
   await stateManager.set("keepExcelOnTop", false);
@@ -573,6 +627,63 @@ async function handleDisconnectExcel(): Promise<void> {
   output.info("服务状态已重置");
   viewProvider.refresh();
   vscode.window.showInformationMessage("已断开与 Excel 的连接");
+}
+
+// ============================================================
+// 等待工作簿被打开（open-waiter）
+// ============================================================
+
+/**
+ * 工作簿归属模型下，插件不代开工作簿：选择文件后进入等待状态，
+ * 轮询检测工作簿被打开（AI 的 MCP server 以 show:true 打开，或用户手动打开），
+ * 一旦检测到即附着 COM 并转入 connected。
+ */
+function startOpenWaiter(filePath: string): void {
+  stopOpenWaiter();
+  openWaiterDeadline = Date.now() + OPEN_WAITER_TIMEOUT_MS;
+  output.info(`开始等待工作簿被打开：${filePath}`);
+  openWaiterTimer = setInterval(() => {
+    void checkWorkbookOpened(filePath);
+  }, OPEN_WAITER_INTERVAL_MS);
+  void checkWorkbookOpened(filePath);
+}
+
+function stopOpenWaiter(): void {
+  if (openWaiterTimer) {
+    clearInterval(openWaiterTimer);
+    openWaiterTimer = undefined;
+    output.info("已停止等待工作簿打开的检测");
+  }
+}
+
+async function checkWorkbookOpened(filePath: string): Promise<void> {
+  let pid: number | undefined;
+  try {
+    pid = await findExcelPidForWorkbook(filePath);
+  } catch {
+    return; // 单次探测失败不影响下一轮
+  }
+
+  if (pid) {
+    stopOpenWaiter();
+    await stateManager.set("excelProcessId", pid);
+    stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
+    lastExcelAvailable = true;
+    output.info(`检测到工作簿已打开（PID ${pid}），Excel 已连接`);
+    if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
+      startFileWatcher();
+      startVbeToLocalWatcher();
+    }
+    pushStateToWebview();
+    return;
+  }
+
+  if (Date.now() > openWaiterDeadline) {
+    stopOpenWaiter();
+    stateManager.setRuntime({ serviceStatus: "disconnected", lastError: undefined });
+    output.warn("等待工作簿打开超时（10 分钟），已停止检测。可重新选择文件或让 AI 打开。");
+    pushStateToWebview();
+  }
 }
 
 // ============================================================
@@ -725,19 +836,6 @@ async function migrateAutoCreatedSyncDir(oldDir: string, newDir: string): Promis
 // Excel Client / Sync Engine 工厂
 // ============================================================
 
-function createExcelClient(): ExcelClient | null {
-  if (!excelClient) {
-    vscode.window.showWarningMessage("MCP Server 尚未启动，请稍候...");
-    return null;
-  }
-  const workbookPath = stateManager.get("workbookPath");
-  if (!workbookPath) {
-    vscode.window.showWarningMessage("请先选择 xlsm/xlsb/xlam 文件。");
-    return null;
-  }
-  return excelClient;
-}
-
 function createVbaClient(): VbaClient | null {
   const workbookPath = stateManager.get("workbookPath");
   if (!workbookPath) {
@@ -832,23 +930,42 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
 // 自动执行 VBA
 // ============================================================
 
+interface MacroInfo {
+  name: string;
+  module: string;
+  procedure: string;
+}
+
+/** 通过 COM 列出宏。listMacros 输出为 JSON：{macros: [{name, module, procedure}]} */
+async function listMacrosViaCom(client: VbaClient): Promise<MacroInfo[] | null> {
+  try {
+    const result = await client.listMacros();
+    if (!result.success || !result.output) {
+      output.warn(`获取宏列表失败：${result.message}`);
+      vscode.window.showWarningMessage(`获取宏列表失败：${result.message}`);
+      return null;
+    }
+    const parsed = JSON.parse(result.output) as { macros?: MacroInfo[] };
+    return parsed.macros ?? [];
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    output.warn(`获取宏列表失败：${msg}`);
+    vscode.window.showWarningMessage(`获取宏列表失败：${msg}`);
+    return null;
+  }
+}
+
 async function tryAutoRunMacro(): Promise<void> {
   let macroName = stateManager.get("autoRunMacroName");
-  const client = createExcelClient();
+  const client = createVbaClient();
   if (!client) return;
   const workbookPath = stateManager.get("workbookPath");
   if (!workbookPath) return;
 
   // 未设置宏名时弹出宏选择列表
   if (!macroName) {
-    let macros: Array<{ name: string; module: string; procedure: string }> = [];
-    try {
-      macros = await client.listMacros(workbookPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      output.warn(`自动执行 VBA：获取宏列表失败：${msg}`);
-      return;
-    }
+    const macros = await listMacrosViaCom(client);
+    if (!macros) return;
     if (macros.length === 0) {
       vscode.window.showWarningMessage("工作簿中未找到任何宏。");
       return;
@@ -870,7 +987,8 @@ async function tryAutoRunMacro(): Promise<void> {
   );
   if (confirm !== "运行") return;
 
-  const result = await client.vbaRun(workbookPath, macroName);
+  // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
+  const result = await client.runMacro(macroName);
   if (result.success) {
     output.info(`宏 ${macroName} 执行成功`);
     if (result.message) output.log(result.message);
@@ -887,19 +1005,11 @@ async function tryAutoRunMacro(): Promise<void> {
 // ============================================================
 
 async function handleRunMacro(): Promise<void> {
-  const client = createExcelClient();
+  const client = createVbaClient();
   if (!client) return;
-  const workbookPath = stateManager.get("workbookPath");
-  if (!workbookPath) return;
 
-  let macros: Array<{ name: string; module: string; procedure: string }> = [];
-  try {
-    macros = await client.listMacros(workbookPath);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    vscode.window.showWarningMessage(`获取宏列表失败：${msg}`);
-    return;
-  }
+  const macros = await listMacrosViaCom(client);
+  if (!macros) return;
   if (macros.length === 0) {
     vscode.window.showWarningMessage("工作簿中未找到任何宏。");
     return;
@@ -910,7 +1020,8 @@ async function handleRunMacro(): Promise<void> {
   );
   if (!picked) return;
   output.info(`开始运行宏：${picked.label}`);
-  const result = await client.vbaRun(workbookPath, picked.label);
+  // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
+  const result = await client.runMacro(picked.label);
   if (result.success) {
     output.info(`宏 ${picked.label} 执行成功`);
     if (result.message) output.log(result.message);
@@ -1277,204 +1388,74 @@ async function restoreExcelWindowState(): Promise<void> {
 }
 
 // ============================================================
-// MCP 配置自动写入
+// excelcli 工具 & 旧版 MCP 配置清理
 // ============================================================
 
-async function writeMcpConfig(): Promise<void> {
-  if (!extensionContext) return;
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders || workspaceFolders.length === 0) return;
-
-  // 固定使用第一个工作区写入 MCP 配置，避免多工作区/目录切换时产生重复配置
-  const targetWsFolder = workspaceFolders[0];
-
-  const serverExePath = findLocalMcpServer(path.join(extensionContext.extensionPath, "dist"));
-  if (!serverExePath) {
-    output.warn("未找到 mcp-server-excel 可执行文件，无法写入 MCP 配置");
-    return;
-  }
-
-  const config = {
-    command: serverExePath,
-    args: [],
-  };
-
-  const wsRoot = targetWsFolder.uri;
-  try {
-    const dirUri = vscode.Uri.joinPath(wsRoot, ".trae");
-    try { await vscode.workspace.fs.createDirectory(dirUri); } catch { /* exists */ }
-    const mcpJsonUri = vscode.Uri.joinPath(dirUri, "mcp.json");
-    await upsertMcpServerConfig(mcpJsonUri, MCP_SERVER_NAME, config);
-    addTrackedWorkspace(wsRoot.fsPath);
-    output.info(`已写入 MCP 配置：${mcpJsonUri.fsPath}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    output.warn(`写入 MCP 配置失败：${msg}`);
-  }
+/** 定位插件内置的 excelcli.exe（CLI daemon 模式的唯一 Excel 持有者入口） */
+function getExcelCliPath(): string | undefined {
+  if (!extensionContext) return undefined;
+  const p = findLocalExcelCli(path.join(extensionContext.extensionPath, "dist"));
+  if (!p) output.warn("未找到 excelcli.exe（插件安装不完整，或未执行 npm run download:cli）");
+  return p;
 }
 
-/** 生成可用于 Trae 全局 MCP 设置的 JSON 并复制到剪贴板（方案 B） */
-async function copyGlobalMcpConfig(): Promise<void> {
+/** 复制 excelcli 完整路径与常用命令到剪贴板，方便在终端验证 / 交给 AI 使用 */
+async function copyCliPath(): Promise<void> {
   if (!extensionContext) {
     vscode.window.showErrorMessage("插件尚未完全激活，请稍后再试。");
     return;
   }
-
-  const distDir = path.join(extensionContext.extensionPath, "dist");
-  const serverExePath = findLocalMcpServer(distDir);
-  if (!serverExePath) {
-    vscode.window.showErrorMessage("未找到 mcp-server-excel 可执行文件，无法生成全局 MCP 配置。请确认插件已正确安装。");
+  const cliPath = getExcelCliPath();
+  if (!cliPath) {
+    vscode.window.showErrorMessage("未找到 excelcli.exe。请确认插件已正确安装。");
     return;
   }
-
-  const config = {
-    mcpServers: {
-      [MCP_SERVER_NAME]: {
-        command: serverExePath,
-        args: [],
-      },
-    },
-  };
-
-  const json = JSON.stringify(config, null, 2);
+  const text = [
+    "excelcli 完整路径（在终端或让 AI 使用此路径操作 Excel）：",
+    cliPath,
+    "",
+    "常用命令：",
+    `& '${cliPath}' -q session list`,
+    `& '${cliPath}' -q session open "D:\\path\\book.xlsm" --show`,
+    `& '${cliPath}' -q sheet list --session <sessionId>`,
+    `& '${cliPath}' -q range set-values --session <sessionId> --sheet Sheet1 --range A1:B1 --values '[["姓名","年龄"]]'`,
+  ].join("\n");
   try {
-    await vscode.env.clipboard.writeText(json);
-    output.info("已复制全局 MCP 配置到剪贴板");
-    vscode.window.showInformationMessage("全局 MCP 配置已复制到剪贴板，操作步骤已打开。");
-    await showGlobalMcpConfigDocument(json);
+    await vscode.env.clipboard.writeText(text);
+    output.info("已复制 excelcli 路径到剪贴板");
+    vscode.window.showInformationMessage("excelcli 路径已复制到剪贴板。");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     vscode.window.showErrorMessage(`复制到剪贴板失败：${msg}`);
-    output.error(`复制全局 MCP 配置失败：${msg}`);
-  }
-}
-
-/** 打开 Markdown 预览展示全局 MCP 配置 JSON 和操作步骤 */
-async function showGlobalMcpConfigDocument(json: string): Promise<void> {
-  const content = `# Excel MCP 全局配置
-
-> 配置 JSON 已经复制到剪贴板。
-
-请按 Trae 截图中的界面操作：
-
-1. 打开 **Trae 设置** → **MCP**
-2. 在「**已配置的 MCP Servers**」区域，点击右上角的 **+ 添加**
-3. 在下拉菜单中选择 **手动配置**
-4. 名称填写 **excel-mcp**，先清空配置输入框，再粘贴剪贴板中的 JSON
-5. 保存后，在「**已配置的 MCP Servers**」列表中确认出现名为 **excel-mcp** 的服务器（没有「工作区」标记）
-
-## JSON 配置（已复制）
-
-\`\`\`json
-${json}
-\`\`\`
-
-## 提示
-
-- 若列表中同时存在 \`excel-mcp (工作区)\`，那是插件自动写入的当前工作区配置，可保留也可删除，避免重复启用即可。
-- 如果只想用全局配置，可关闭顶部的「**启用项目级 MCP**」开关，这样 Trae 就不会再加载 \`.trae/mcp.json\` 里的工作区配置了。
-`;
-  const tempFile = path.join(os.tmpdir(), "excel-mcp-global-config.md");
-  try {
-    fs.writeFileSync(tempFile, content, "utf-8");
-    const uri = vscode.Uri.file(tempFile);
-    await vscode.commands.executeCommand("markdown.showPreview", uri);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    output.warn(`打开 Markdown 预览失败：${msg}`);
-    // fallback：以普通文本方式打开
-    try {
-      const doc = await vscode.workspace.openTextDocument({
-        content,
-        language: "markdown",
-      });
-      await vscode.window.showTextDocument(doc, { preview: true });
-    } catch (fallbackErr) {
-      output.warn(`打开临时文档也失败：${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
-    }
-  }
-}
-
-const MCP_WS_TRACK_DIR = path.join(process.env.APPDATA || os.homedir(), "excel-vba-assistant");
-const MCP_WS_TRACK_FILE = path.join(MCP_WS_TRACK_DIR, "mcp-workspaces.json");
-
-function readTrackedWorkspaces(): string[] {
-  try {
-    if (!fs.existsSync(MCP_WS_TRACK_FILE)) return [];
-    return JSON.parse(fs.readFileSync(MCP_WS_TRACK_FILE, "utf-8")) as string[];
-  } catch { return []; }
-}
-
-function writeTrackedWorkspaces(list: string[]): void {
-  try {
-    if (!fs.existsSync(MCP_WS_TRACK_DIR)) {
-      fs.mkdirSync(MCP_WS_TRACK_DIR, { recursive: true });
-    }
-    fs.writeFileSync(MCP_WS_TRACK_FILE, JSON.stringify(list, null, 2), "utf-8");
-  } catch { /* ignore */ }
-}
-
-function addTrackedWorkspace(wsPath: string): void {
-  const list = readTrackedWorkspaces();
-  if (!list.includes(wsPath)) {
-    list.push(wsPath);
-    writeTrackedWorkspaces(list);
-  }
-}
-
-function removeTrackedWorkspace(wsPath: string): void {
-  let list = readTrackedWorkspaces();
-  list = list.filter((p) => p !== wsPath);
-  writeTrackedWorkspaces(list);
-}
-
-async function removeMcpConfig(): Promise<void> {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders || workspaceFolders.length === 0) return;
-
-  // 清理所有工作区中的同名 MCP 配置，防止重复或残留
-  for (const wf of workspaceFolders) {
-    try {
-      await removeMcpServerConfig(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), MCP_SERVER_NAME);
-      removeTrackedWorkspace(wf.uri.fsPath);
-    } catch { /* ignore */ }
   }
 }
 
 /**
- * 清空 MCP 配置的环境变量，但保留 server 条目。
- *
- * 用于 Excel 关闭/断开时：不删除 MCP server 配置，只清空 env vars，
- * 避免 Trae 丢失 MCP server 导致下次显示 "no tools"。
- * MCP server 启动时总是注册所有工具，调用时才需要 Excel 连接，
- * 因此保留 server 条目即可保持工具列表可用。
+ * 清理旧版本（v0.8.x MCP 架构）遗留的 .trae/mcp.json 中 excel-mcp 条目。
+ * CLI 架构不再需要任何 MCP 配置。
  */
-async function clearMcpConfigEnv(): Promise<void> {
-  if (!extensionContext) return;
+async function removeLegacyMcpConfig(): Promise<void> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) return;
+  for (const wf of workspaceFolders) {
+    try {
+      await removeMcpServerEntry(vscode.Uri.joinPath(wf.uri, ".trae", "mcp.json"), "excel-mcp");
+    } catch { /* ignore */ }
+  }
+}
 
-  const targetWsFolder = workspaceFolders[0];
-  const serverExePath = findLocalMcpServer(path.join(extensionContext.extensionPath, "dist"));
-  if (!serverExePath) {
-    output.warn("未找到 mcp-server-excel 可执行文件，无法清空 MCP 环境变量");
+async function removeMcpServerEntry(uri: vscode.Uri, name: string): Promise<void> {
+  let json: { mcpServers?: Record<string, unknown> } = {};
+  try {
+    const data = await vscode.workspace.fs.readFile(uri);
+    json = JSON.parse(Buffer.from(data).toString("utf-8"));
+  } catch {
     return;
   }
-
-  // 保留 server 条目；upsert 确保不产生重复条目
-  const config = {
-    command: serverExePath,
-    args: [],
-  };
-
-  try {
-    const mcpJsonUri = vscode.Uri.joinPath(targetWsFolder.uri, ".trae", "mcp.json");
-    await upsertMcpServerConfig(mcpJsonUri, MCP_SERVER_NAME, config);
-    output.info(`已清空 MCP 环境变量（保留 server 条目）：${mcpJsonUri.fsPath}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    output.warn(`清空 MCP 环境变量失败：${msg}`);
-  }
+  if (!json.mcpServers) return;
+  delete json.mcpServers[name];
+  const content = JSON.stringify(json, null, 2);
+  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
 }
 
 async function setExcelVbaIconTheme(): Promise<void> {
@@ -1492,35 +1473,11 @@ async function setExcelVbaIconTheme(): Promise<void> {
   }
 }
 
-async function upsertMcpServerConfig(uri: vscode.Uri, name: string, config: unknown): Promise<void> {
-  let json: { mcpServers?: Record<string, unknown> } = {};
-  try {
-    const data = await vscode.workspace.fs.readFile(uri);
-    json = JSON.parse(Buffer.from(data).toString("utf-8"));
-  } catch {
-    json = {};
-  }
-  json.mcpServers = json.mcpServers || {};
-  json.mcpServers[name] = config;
-  const content = JSON.stringify(json, null, 2);
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
-}
-
-async function removeMcpServerConfig(uri: vscode.Uri, name: string): Promise<void> {
-  let json: { mcpServers?: Record<string, unknown> } = {};
-  try {
-    const data = await vscode.workspace.fs.readFile(uri);
-    json = JSON.parse(Buffer.from(data).toString("utf-8"));
-  } catch {
-    return;
-  }
-  if (!json.mcpServers) return;
-  delete json.mcpServers[name];
-  const content = JSON.stringify(json, null, 2);
-  await vscode.workspace.fs.writeFile(uri, Buffer.from(content, "utf-8"));
-}
-
-/** 将插件内置的 skills 目录同步到当前工作区的 .trae/skills/excel-vba-assistant/，让 Trae AI 能按需加载 */
+/**
+ * 将插件内置的 skills 目录递归同步到当前工作区的 .trae/skills/，
+ * 让 Trae AI 能按需加载（excel-vba-assistant 编排文档 + 官方 excel-cli 31 组命令文档）。
+ * 复制文本文件时替换 {{EXCELCLI_PATH}} 占位符为内置 excelcli.exe 的真实路径。
+ */
 async function syncBuiltinSkillsToWorkspace(showMessage = false): Promise<void> {
   if (!extensionContext) return;
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -1539,28 +1496,41 @@ async function syncBuiltinSkillsToWorkspace(showMessage = false): Promise<void> 
     return;
   }
 
+  const cliPath = findLocalExcelCli(path.join(extensionContext.extensionPath, "dist"))
+    || "excelcli.exe 缺失（插件安装不完整，请重新安装）";
+
   let totalCopied = 0;
-  for (const wf of workspaceFolders) {
-    const targetDir = path.join(wf.uri.fsPath, ".trae", "skills", "excel-vba-assistant");
-    try {
-      await mkdir(targetDir, { recursive: true });
-      const files = await readdir(sourceDir);
-      for (const file of files) {
-        const src = path.join(sourceDir, file);
-        const stat = fs.statSync(src);
-        if (!stat.isFile()) continue;
-        const dest = path.join(targetDir, file);
-        let shouldCopy = true;
-        if (fs.existsSync(dest)) {
-          const destStat = fs.statSync(dest);
-          // 仅当内置文件更新时才覆盖，避免覆盖用户自定义内容
-          shouldCopy = stat.mtime > destStat.mtime;
-        }
-        if (shouldCopy) {
-          fs.copyFileSync(src, dest);
-          totalCopied++;
-        }
+  const copyDir = async (src: string, dest: string): Promise<void> => {
+    await mkdir(dest, { recursive: true });
+    const entries = await readdir(src, { withFileTypes: true });
+    for (const entry of entries) {
+      const srcPath = path.join(src, entry.name);
+      const destPath = path.join(dest, entry.name);
+      if (entry.isDirectory()) {
+        await copyDir(srcPath, destPath);
+        continue;
       }
+      if (!entry.isFile()) continue;
+      let shouldCopy = true;
+      if (fs.existsSync(destPath)) {
+        shouldCopy = fs.statSync(srcPath).mtime > fs.statSync(destPath).mtime;
+      }
+      if (shouldCopy) {
+        if (/\.(md|txt|json)$/i.test(entry.name)) {
+          const content = fs.readFileSync(srcPath, "utf-8").split("{{EXCELCLI_PATH}}").join(cliPath);
+          fs.writeFileSync(destPath, content, "utf-8");
+        } else {
+          fs.copyFileSync(srcPath, destPath);
+        }
+        totalCopied++;
+      }
+    }
+  };
+
+  for (const wf of workspaceFolders) {
+    const targetDir = path.join(wf.uri.fsPath, ".trae", "skills");
+    try {
+      await copyDir(sourceDir, targetDir);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       output.warn(`同步 Skill 到工作区失败：${msg}`);
@@ -1571,7 +1541,7 @@ async function syncBuiltinSkillsToWorkspace(showMessage = false): Promise<void> 
     }
   }
 
-  output.info(`已同步 ${totalCopied} 个 Skill 文件到 .trae/skills/excel-vba-assistant/`);
+  output.info(`已同步 ${totalCopied} 个 Skill 文件到 .trae/skills/`);
   if (showMessage) {
     void vscode.window.showInformationMessage(`已同步 ${totalCopied} 个 Skill 文件到当前工作区。`);
   }

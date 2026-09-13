@@ -2,7 +2,7 @@
   "name": "excel-vba-assistant",
   "displayName": "Excel VBA Assistant",
   "description": "Excel VBA 本地同步器 + AI 编程桥接器：在 Trae/VS Code 中管理、同步、编辑、运行和 AI 辅助开发 Excel VBA 项目",
-  "version": "0.8.6",
+  "version": "0.9.0",
   "publisher": "excel-vba-assistant",
   "license": "MIT",
   "icon": "resources/plugin-icon.png",
@@ -79,6 +79,14 @@
         "title": "Excel VBA: 使用当前工作区作为同步目录"
       },
       {
+        "command": "excelVba.useExcelSameDirectory",
+        "title": "Excel VBA: 使用 Excel 相同目录"
+      },
+      {
+        "command": "excelVba.disconnectExcel",
+        "title": "Excel VBA: 断开 Excel"
+      },
+      {
         "command": "excelVba.syncVbeToLocal",
         "title": "Excel VBA: VBE → 本地 同步"
       },
@@ -111,8 +119,8 @@
         "title": "Excel VBA: 同步 Skill 到工作区"
       },
       {
-        "command": "excelVba.copyGlobalMcpConfig",
-        "title": "Excel VBA: 复制全局 MCP 配置到剪贴板"
+        "command": "excelVba.copyCliPath",
+        "title": "Excel VBA: 复制 excelcli 路径与常用命令"
       }
     ],
     "configuration": {
@@ -136,7 +144,7 @@
         "excelVba.localServiceUrl": {
           "type": "string",
           "default": "",
-          "description": "预留：本地服务地址（当前版本通过 mcp-server-excel 直接通信，无需填写）"
+          "description": "预留：本地服务地址（当前版本通过 COM 附着 Excel，无需填写）"
         }
       }
     },
@@ -155,9 +163,9 @@
   "scripts": {
     "compile": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
     "compile:uninstall": "esbuild ./src/uninstall.ts --bundle --outfile=dist/uninstall.js --format=cjs --platform=node --target=node18 --minify",
-    "download:mcp-server": "node tools/download-mcp-server.js",
+    "download:cli": "node tools/download-excel-cli.js",
     "build": "npm run compile && npm run compile:uninstall",
-    "package": "npm run build && npm run download:mcp-server && vsce package --allow-missing-repository",
+    "package": "npm run build && npm run download:cli && vsce package --allow-missing-repository",
     "vscode:prepublish": "npm run build",
     "vscode:uninstall": "node ./dist/uninstall.js"
   },
@@ -166,10 +174,6 @@
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.20.0",
-    "pkg": "^5.8.1",
     "typescript": "^5.3.0"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }

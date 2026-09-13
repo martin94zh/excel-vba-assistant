@@ -445,7 +445,7 @@ try {
             if (Test-Path $targetFile) {
                 $existingBytes = [System.IO.File]::ReadAllBytes($targetFile)
                 $existingContent = $utf8NoBom.GetString($existingBytes)
-                if ($existingContent -eq $content) { $frmChanged = $false }
+                if ($existingContent -ceq $content) { $frmChanged = $false }
             }
             if ($frmChanged) {
                 [System.IO.File]::WriteAllText($targetFile, $content, $utf8NoBom)
@@ -486,7 +486,7 @@ try {
             if (Test-Path $targetFile) {
                 $existingBytes = [System.IO.File]::ReadAllBytes($targetFile)
                 $existingContent = $utf8NoBom.GetString($existingBytes)
-                if ($existingContent -eq $content) { $contentChanged = $false }
+                if ($existingContent -ceq $content) { $contentChanged = $false }
             }
             if ($contentChanged) {
                 [System.IO.File]::WriteAllText($targetFile, $content, $utf8NoBom)
@@ -688,7 +688,7 @@ try {
         $vbeCode = ""
         if ($cm.CountOfLines -gt 0) { $vbeCode = [string]$cm.Lines(1, $cm.CountOfLines) }
         $vbeClean = ($vbeCode -split "\`r\`n|\`r|\`n" | Where-Object { $_ -notmatch "^Attribute " }) -join "\`r\`n"
-        if ($vbeClean.TrimEnd() -eq $code.TrimEnd()) { return $false }
+        if ($vbeClean.TrimEnd() -ceq $code.TrimEnd()) { return $false }
         if ($cm.CountOfLines -gt 0) { $cm.DeleteLines(1, $cm.CountOfLines) }
         if ($code.Length -gt 0) { $cm.AddFromString($code) }
         return $true

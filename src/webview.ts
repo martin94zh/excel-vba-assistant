@@ -18,7 +18,7 @@ export type WebviewMessage =
   | { type: "syncVbeToLocal" }
   | { type: "syncLocalToVbe" }
   | { type: "disconnectExcel" }
-  | { type: "copyGlobalMcpConfig" };
+  | { type: "copyCliPath" };
 
 /** 插件发送给 Webview 的状态消息 */
 export interface StatePayload {
@@ -425,7 +425,7 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
       <button id="selectWorkbook" onclick="send('selectWorkbook')">选择文件</button>
       <button class="danger" id="disconnectExcel" onclick="send('disconnectExcel')" ${serviceStatus === "disconnected" || serviceStatus === "unknown" ? "disabled" : ""}>断开Excel</button>
     </div>
-    ${serviceStatus === "connected" || serviceStatus === "syncing" || serviceStatus === "synced" ? '<p class="hint">Excel 当前由插件通过 MCP 托管</p>' : ""}
+    ${serviceStatus === "connected" || serviceStatus === "syncing" || serviceStatus === "synced" ? '<p class="hint">Excel 已连接：excelcli daemon 托管（前台可见），AI 经 excelcli 操作，插件经 COM 同步 VBE</p>' : ""}
 
     <label>VBA 同步目录</label>
     <div class="input-display path-display ${syncDirectory ? "" : "placeholder"}" id="syncDirectory" title="${this.escapeHtml(syncDirectory)}">${this.escapeHtml(syncDirectory) || "未设置"}</div>
@@ -472,9 +472,9 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
       </label>
     </div>
 
-    <label>全局 MCP 配置</label>
-    <button class="secondary" id="copyGlobalMcpConfig" onclick="send('copyGlobalMcpConfig')">复制全局 MCP 配置到剪贴板</button>
-    <p class="hint">复制后，打开 Trae 设置 → MCP → 添加服务器，粘贴 JSON 即可全局使用。</p>
+    <label>excelcli</label>
+    <button class="secondary" id="copyCliPath" onclick="send('copyCliPath')">复制 excelcli 路径与常用命令</button>
+    <p class="hint">AI 通过 excelcli 操作 Excel（daemon 共享会话）。此命令也可在终端直接使用。</p>
   </section>
 
   <section class="card">
