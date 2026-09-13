@@ -494,6 +494,14 @@ foreach ($p in $preferred) {
   $match = $buttons | Where-Object { $_.Text -eq $p } | Select-Object -First 1
   if ($null -ne $match) { break }
 }
+if ($null -eq $match) {
+  # 中文 Excel 按钮文本带热键后缀（如"结束(&E)"），去掉 & 后做包含匹配
+  foreach ($p in $preferred) {
+    $pNorm = ($p -replace '&', '')
+    $match = $buttons | Where-Object { (($_.Text -replace '&', '') -like "*$pNorm*") } | Select-Object -First 1
+    if ($null -ne $match) { break }
+  }
+}
 if ($null -eq $match -and $buttons.Count -eq 1) {
   $match = $buttons[0]
 }
@@ -538,6 +546,76 @@ try {
 `;
   const result = await runPowerShell(script);
   return result.success && result.output?.trim() === "true";
+}
+
+/**
+ * 编译错误弹窗点击"确定"后 VBE 会进入中断模式（Run 调用挂起不返回），
+ * 对 VBE 主窗口发送 Run > 重置（Alt+R, R）恢复设计模式。
+ */
+export async function resetVbeInterrupt(processId: number): Promise<boolean> {
+  const script = `
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class VbeResetWin32 {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int nMaxCount);
+}
+"@
+$targetPid = ${processId}
+$script:foundTitle = ""
+[VbeResetWin32]::EnumWindows({
+  param($hWnd, $lParam)
+  if (-not [VbeResetWin32]::IsWindowVisible($hWnd)) { return $true }
+  $winPid = [uint32]0
+  [void][VbeResetWin32]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
+  if ($winPid -ne $targetPid) { return $true }
+  $sb = New-Object System.Text.StringBuilder 512
+  [void][VbeResetWin32]::GetWindowText($hWnd, $sb, 512)
+  $t = $sb.ToString()
+  if ($t -like "Microsoft Visual Basic*") { $script:foundTitle = $t; return $false }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+if ($script:foundTitle -eq "") {
+  Write-Output "novbe"
+  exit 0
+}
+Add-Type -AssemblyName Microsoft.VisualBasic
+try {
+  [Microsoft.VisualBasic.Interaction]::AppActivate($script:foundTitle)
+  Start-Sleep -Milliseconds 200
+  $wshell = New-Object -ComObject WScript.Shell
+  # Alt+R 打开"运行"菜单，R 选择"重置"
+  $wshell.SendKeys("%r")
+  Start-Sleep -Milliseconds 150
+  $wshell.SendKeys("r")
+  Start-Sleep -Milliseconds 300
+  Write-Output "reset"
+} catch {
+  Write-Output "keysfail"
+}
+`;
+  const result = await runPowerShell(script, 20000);
+  const out = (result.output || "").trim();
+  logReset?.(`VBE 重置: ${out || result.message}`);
+  return out === "reset";
+}
+
+/** 重置动作的日志回调（由插件宿主注入；测试台可空） */
+let logReset: ((message: string) => void) | undefined;
+export function setMacroRunnerLogger(fn: (message: string) => void): void {
+  logReset = fn;
 }
 
 function enrichDialogInfo(dialog: MacroDialogInfo): MacroDialogInfo & {
@@ -590,6 +668,10 @@ export async function clickExcelDialog(handle: string, action?: string, buttonTe
       message: `未能点击弹窗按钮「${resolvedAction.actionLabel}」。可用按钮：${dialog.buttons.join(" / ") || "无"}`,
       details: { dialog, requestedAction: action || null, requestedButtonText: buttonText || null, preferredButtons: resolvedAction.buttons },
     };
+  }
+  // 编译错误弹窗点"确定"后 VBE 进入中断模式，Run 会一直挂起，需要重置
+  if (dialog.kind === "vb_runtime_error" && /编译错误|compile error/i.test(`${dialog.title} ${dialog.text}`)) {
+    await resetVbeInterrupt(dialog.processId || 0);
   }
   return {
     success: true,
@@ -805,6 +887,11 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
           recordedFingerprints.add(fingerprint);
         }
         existing.handled = true;
+
+        // 编译错误弹窗点"确定"后 VBE 进入中断模式，Run 会一直挂起，需要重置
+        if (dialog.kind === "vb_runtime_error" && /编译错误|compile error/i.test(`${dialog.title} ${dialog.text}`)) {
+          await resetVbeInterrupt(dialog.processId || 0);
+        }
 
         if (action.terminal) {
           await sleep(900);

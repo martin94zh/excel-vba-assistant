@@ -30,6 +30,7 @@ import { OutputManager } from "./output/outputChannel";
 import { StatusBarManager } from "./status/statusBar";
 import { ExcelVbaPanelProvider, type WebviewMessage, type StatePayload } from "./webview";
 import { VbaClient } from "./client/vbaClient";
+import { startMacroBridge } from "./client/macroBridge";
 import { findLocalExcelCli, runExcelCli } from "./native/cliRunner";
 import {
   findExcelPidForWorkbook,
@@ -66,6 +67,7 @@ let syncDebounceTimer: NodeJS.Timeout | undefined;
 let vbeToLocalCheckTimer: NodeJS.Timeout | undefined;
 let openWaiterTimer: NodeJS.Timeout | undefined;
 let openWaiterDeadline = 0;
+let macroBridge: ReturnType<typeof startMacroBridge> | undefined;
 let isSyncing = false;
 let isSyncingVbeToLocal = false;
 let lastExcelAvailable = false;
@@ -87,6 +89,22 @@ export function activate(context: vscode.ExtensionContext): void {
   output = new OutputManager();
   statusBar = new StatusBarManager(stateManager);
   context.subscriptions.push(output, statusBar);
+
+  // 宏运行桥 + Excel 弹窗监视：AI 写 macro-run.json 即可用带弹窗捕获的 COM 路径跑宏；
+  // 任何错误弹窗（如 AI 直接 vba run 触发）都会被抓取文本、自动结束并记录到 excel-dialogs.json
+  macroBridge = startMacroBridge({
+    getClient: () => {
+      const wb = stateManager.get("workbookPath");
+      if (!wb) return null;
+      return new VbaClient(wb, stateManager.get("excelProcessId") || undefined);
+    },
+    getSyncDir: () => stateManager.get("syncDirectory") || null,
+    log: (m) => output.info(m),
+    notify: (m) => {
+      void vscode.window.showWarningMessage(m);
+    },
+  });
+  context.subscriptions.push({ dispose: () => macroBridge?.stop() });
 
   viewProvider = new ExcelVbaPanelProvider(context.extensionUri, stateManager, (msg) => {
     void handleWebviewMessage(msg);

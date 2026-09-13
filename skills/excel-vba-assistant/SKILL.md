@@ -42,13 +42,35 @@ description: >
 
 完整命令参考：[../excel-cli/SKILL.md](../excel-cli/SKILL.md)（31 组命令与 326 操作的官方文档）。
 
+## 宏开发循环（改宏 → 跑宏 → 抓报错 → 读结果 → 再改）
+
+AI 修改 VBA 后测试宏，**必须走插件的宏运行桥**（能抓取报错弹窗全文、自动结束错误弹窗、Excel 不会被杀）：
+
+1. `vba update`（excelcli）写入/修改模块代码
+2. 用文件工具向**同步目录**写 `macro-run.json`（UTF-8）：
+   `{"macro": "Module1.YourProc", "timeoutMs": 30000}`
+3. 轮询读取同目录 `macro-run-result.json`（文件出现即为运行完成）：
+   - `success=false` 时 `dialogs[]` 含报错弹窗的标题与**全文**（如"运行时错误 '11': 除数为零"、
+     "编译错误: 子过程或函数未定义"），弹窗已被自动关闭，按报错内容修正代码
+   - `success=true` 也要检查 `dialogs[]`（宏内 MsgBox 等已记录）
+4. `range get-values` 读取运行结果单元格，依据结果继续修改，重复 1-4
+
+注意事项：
+
+- **不要对可能有错的宏直接用 `excelcli vba run`**：VBA 错误弹窗会阻塞 daemon，超时后会话被销毁、
+  Excel 进程退出且拿不到报错文本。确认无风险的宏（已通过桥接跑通）才可直接 `vba run`。
+- 若会话因历史操作失效：`session list` 检查 → `session open` 重新打开即可恢复。
+- 宏内的 `MsgBox`/`InputBox` 会阻塞运行：测试期请临时注释掉。
+- 所有错误弹窗的最近 20 条记录同时保存在同步目录 `excel-dialogs.json`，插件宿主也会弹出 VS Code 通知。
+
 ## 插件侧能力（AI 无需介入）
 
 | 能力 | 实现方式 |
 |------|----------|
 | 选择文件并前台打开 | `excelcli session open --show`（daemon 持有） |
 | VBE ↔ 本地双向同步 | 插件内部 COM（自动 3 秒轮询 + 文件监听 + 手动命令） |
-| 宏运行（含弹窗处理） | 插件内部 COM `runMacro`（弹窗自动检测交互） |
+| 宏运行（含弹窗处理） | 插件内部 COM `runMacro`（弹窗自动检测、抓取文本、点击"结束"，编译错误自动重置 VBE） |
+| 宏运行桥（AI 专用） | 同步目录 `macro-run.json` → `macro-run-result.json` |
 | Excel 置顶 | 插件内部 COM（keepExcelOnTop 开关） |
 | 断开并保存 | `excelcli session close --save`，COM 兜底 |
 
