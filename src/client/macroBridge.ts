@@ -19,7 +19,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { VbaClient } from "./vbaClient";
 import type { MacroDialogPolicy } from "./vbaMacroRunner";
-import { findExcelPidForWorkbook } from "../native/processUtils";
+import { findExcelPidForWorkbook, hasVisibleWorkbookWindow } from "../native/processUtils";
 
 export interface MacroRunRequest {
   macro: string;
@@ -280,17 +280,15 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
 
   let pidMissCount = 0;
   async function tick(): Promise<void> {
-    // 工作簿持有者消失检测（用户手工关闭 Excel 等）：用 COM 通道探测工作簿状态，
-    // 仅在明确"Excel 未运行/工作簿未打开"时计数（busy/未知不算，避免误关正在忙碌的 Excel）。
-    // 仅在已连接状态下生效；等待打开阶段 PID 缺失属正常。
+    // 工作簿持有者消失检测（用户手工关闭 Excel 等）：以"是否存在可见的工作簿主窗口（XLMAIN）"
+    // 为准——VBE 聚焦/Excel 忙碌时主窗口标题不变，视为存活；僵尸进程无可见窗口才判定消失。
+    // 连续 2 次消失触发恢复。仅在已连接状态下生效；等待打开阶段属正常。
     if (options.onWorkbookVanished && options.isConnected?.()) {
       const wb = options.getWorkbookPath?.();
-      const c = options.getClient();
-      if (wb && c) {
+      if (wb) {
         let missing = false;
         try {
-          const state = await c.workbookState();
-          missing = state === "noexcel" || state === "notfound";
+          missing = !(await hasVisibleWorkbookWindow(wb));
         } catch {
           missing = false;
         }

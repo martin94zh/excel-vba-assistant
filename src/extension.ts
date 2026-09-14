@@ -29,6 +29,7 @@ import { StateManager } from "./state";
 import { OutputManager } from "./output/outputChannel";
 import { StatusBarManager } from "./status/statusBar";
 import { ExcelVbaPanelProvider, type WebviewMessage, type StatePayload } from "./webview";
+import { sleep } from "./runtime/powershell";
 import { VbaClient } from "./client/vbaClient";
 import { startMacroBridge } from "./client/macroBridge";
 import { findLocalExcelCli, runExcelCli } from "./native/cliRunner";
@@ -783,6 +784,7 @@ async function setSyncDirectory(newDir: string, autoCreated: boolean): Promise<v
   pushStateToWebview();
 
   syncWatchersRefresh();
+  await initialVbeExportIfNeeded();
 
   // 在资源管理器中打开同步目录
   await openSyncDirInWorkspace(newDir);
@@ -1454,7 +1456,11 @@ async function applyExcelOnTopIfNeeded(): Promise<void> {
   const client = createVbaClient();
   if (!client) return;
   try {
-    const result = await client.setWindowTopMost(true);
+    let result = await client.setWindowTopMost(true);
+    if (!result.success) {
+      await sleep(400);
+      result = await client.setWindowTopMost(true);
+    }
     if (result.success) {
       output.info("Excel 已置顶");
     } else {

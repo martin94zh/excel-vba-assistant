@@ -85,6 +85,65 @@ if ($found) { Write-Output "PRESENT" } else { Write-Output "ABSENT" }
   }
 }
 
+/**
+ * 判断是否存在"可见的、标题包含目标工作簿名"的 Excel 主窗口（XLMAIN）。
+ *
+ * 这是工作簿消失检测的可靠信号（优于 MainWindowTitle / PID 判定）：
+ * - 用户在 VBE 中编辑时：VBE 窗口虽在前台，但 XLMAIN 主窗口标题不变 → 视为存活
+ * - Excel 忙碌/暂时无响应：窗口仍存在 → 视为存活
+ * - 用户已关闭 Excel（含 daemon 持有的僵尸进程）：无可见 XLMAIN → 判定消失
+ */
+export async function hasVisibleWorkbookWindow(workbookPath: string): Promise<boolean> {
+  try {
+    const path = await import("path");
+    const wbName = path.basename(workbookPath).replace(/'/g, "''");
+    const wbNameNoExt = path.basename(workbookPath, path.extname(workbookPath)).replace(/'/g, "''");
+    const script = `
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class XlWinCheck {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc c, IntPtr l);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+}
+"@
+$found = $false
+$wbName = '${wbName}'
+$wbNameNoExt = '${wbNameNoExt}'
+[XlWinCheck]::EnumWindows({
+  param($h, $l)
+  if (-not [XlWinCheck]::IsWindowVisible($h)) { return $true }
+  $cls = New-Object System.Text.StringBuilder 256
+  [void][XlWinCheck]::GetClassName($h, $cls, 256)
+  if ($cls.ToString() -ne "XLMAIN") { return $true }
+  $p = [uint32]0
+  [void][XlWinCheck]::GetWindowThreadProcessId($h, [ref]$p)
+  if ($p -eq 0) { return $true }
+  $pn = (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName
+  if ($pn -notmatch '^(?i:excel|et|wps)$') { return $true }
+  $tb = New-Object System.Text.StringBuilder 512
+  [void][XlWinCheck]::GetWindowText($h, $tb, 512)
+  $t = $tb.ToString()
+  if ($t -like "*$wbName*" -or $t -like "*$wbNameNoExt*") { $script:found = $true; return $false }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+if ($found) { Write-Output "VISIBLE" } else { Write-Output "NONE" }
+`;
+    const encoded = Buffer.from(script, "utf16le").toString("base64");
+    const result = await execAsync(`powershell -NoProfile -EncodedCommand ${encoded}`, { timeout: 20000, encoding: "utf-8" });
+    return (result.stdout || "").trim() === "VISIBLE";
+  } catch {
+    // 探测失败按"仍存活"处理，避免误触发清理
+    return true;
+  }
+}
+
 /** 通过窗口标题反查包含目标工作簿的 Excel 进程 ID（不使用 COM） */
 export async function findExcelProcessIdByWindow(workbookPath: string): Promise<number> {
   try {
