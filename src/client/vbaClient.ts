@@ -1324,8 +1324,11 @@ try {
   /** 设置 Excel 主窗口置顶或取消置顶（不经过 COM，直接调用 Win32 API） */
   async setWindowTopMost(onTop: boolean): Promise<ExcelComResult> {
     const action = onTop ? "置顶" : "取消置顶";
-    // 枚举该 Excel 进程的全部可见顶层窗口（XLMAIN 主窗口 + VBE 主窗口）逐一置顶，
-    // 并读回 WS_EX_TOPMOST 标志验证——Get-Process.MainWindowHandle 在多窗口时不可靠
+    // 关键：对非前台进程 SetWindowPos 设 TOPMOST，样式位会写入但 Excel 窗口的实际
+    // Z 序会被延迟重算（直到下次激活才落位，用户看到"没生效"）。因此采用升级阶梯：
+    // FRAMECHANGED 强制重算 → NOTOPMOST/TOPMOST 往返 → 按原坐标物理重插 → HWND_TOP 提升，
+    // 每档之后做双重验证：样式位 + WindowFromPoint 视觉校验（取 Excel 窗口中心点，
+    // 命中的必须是我们自己的窗口）。全程不抢前台焦点。
     const script = `
 $ErrorActionPreference = "Stop"
 try {
@@ -1333,52 +1336,99 @@ try {
     using System;
     using System.Runtime.InteropServices;
     using System.Text;
-    public class Win32TopMost2 {
+    public class Win32TopMost3 {
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc c, IntPtr l);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
         [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr h);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
-        [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
         [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
+        [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(long pt);
+        [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
     }
 "@
     $HWND_TOPMOST = [IntPtr]::new(-1)
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
-    $SWP = 0x0001 -bor 0x0002 -bor 0x0010
+    $HWND_TOP = [IntPtr]::new(0)
+    $NOMOVE = 0x0002; $NOSIZE = 0x0001; $NOACTIVATE = 0x0010; $FRAMECHANGED = 0x0020
+    $TOPMOST_BIT = 0x8
     $targetPid = ${this.excelProcessId || 0}
     if ($targetPid -le 0) { throw "未记录 Excel 进程 PID" }
     $script:hits = New-Object System.Collections.Generic.List[object]
-    [Win32TopMost2]::EnumWindows({
+    [Win32TopMost3]::EnumWindows({
         param($h, $l)
-        if (-not [Win32TopMost2]::IsWindowVisible($h)) { return $true }
-        $p = [uint32]0; [void][Win32TopMost2]::GetWindowThreadProcessId($h, [ref]$p)
+        if (-not [Win32TopMost3]::IsWindowVisible($h)) { return $true }
+        $p = [uint32]0; [void][Win32TopMost3]::GetWindowThreadProcessId($h, [ref]$p)
         if ($p -ne $targetPid) { return $true }
         $cls = New-Object System.Text.StringBuilder 256
-        [void][Win32TopMost2]::GetClassName($h, $cls, 256)
+        [void][Win32TopMost3]::GetClassName($h, $cls, 256)
         $c = $cls.ToString()
         if ($c -ne "XLMAIN" -and -not $c.StartsWith("wndclass_desked_gsk")) { return $true }
         $tb = New-Object System.Text.StringBuilder 256
-        [void][Win32TopMost2]::GetWindowText($h, $tb, 256)
+        [void][Win32TopMost3]::GetWindowText($h, $tb, 256)
         $script:hits.Add(@{ H = $h; Class = $c; Title = $tb.ToString() }) | Out-Null
         return $true
     }, [IntPtr]::Zero) | Out-Null
     if ($script:hits.Count -eq 0) { throw "未找到 Excel/VBE 窗口" }
+    $xlmain = $script:hits | Where-Object { $_.Class -eq "XLMAIN" } | Select-Object -First 1
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $flag = 0x8
-    $ok = 0
-    foreach ($w in $script:hits) {
-        [void][Win32TopMost2]::SetWindowPos($w.H, $target, 0, 0, 0, 0, $SWP)
+    $other  = if (${onTop ? "$true" : "$false"}) { $HWND_NOTOPMOST } else { $HWND_TOPMOST }
+    function Test-Style {
+        foreach ($w in $script:hits) {
+            $style = [Win32TopMost3]::GetWindowLong($w.H, -20)
+            $isTop = [bool]($style -band $TOPMOST_BIT)
+            if (${onTop ? "$true" : "$false"}) { if (-not $isTop) { return $false } }
+            else { if ($isTop) { return $false } }
+        }
+        return $true
     }
-    Start-Sleep -Milliseconds 200
-    foreach ($w in $script:hits) {
-        $style = [Win32TopMost2]::GetWindowLong($w.H, -20)
-        $isTop = ([bool]($style -band $flag))
-        if (${onTop ? "$true" : "$false"}) { if ($isTop) { $ok++ } } else { if (-not $isTop) { $ok++ } }
-        Write-Output "窗口[$($w.Class)] $($w.Title) → $(if ($isTop) { 'TOPMOST' } else { '非置顶' })"
+    function Test-Visual {
+        if (-not ${onTop ? "$true" : "$false"}) { return $true }
+        if ($null -eq $xlmain) { return $true }
+        $rect = New-Object Win32TopMost3+RECT
+        [void][Win32TopMost3]::GetWindowRect($xlmain.H, [ref]$rect)
+        $cx = [int](($rect.Left + $rect.Right) / 2)
+        $cy = [int](($rect.Top + $rect.Bottom) / 2)
+        $pt = [IntPtr]::new(([long]$cx -bor ([long]$cy -shl 32)))
+        $hit = [Win32TopMost3]::WindowFromPoint($pt)
+        if ($hit -eq [IntPtr]::Zero) { return $false }
+        $root = [Win32TopMost3]::GetAncestor($hit, 2)
+        foreach ($w in $script:hits) { if ($w.H -eq $root) { return $true } }
+        return $false
     }
-    if ($ok -lt $script:hits.Count) { throw "部分窗口置顶状态未生效" }
+    function Apply([IntPtr]$after, [uint32]$flags) {
+        foreach ($w in $script:hits) {
+            [void][Win32TopMost3]::SetWindowPos($w.H, $after, 0, 0, 0, 0, $flags)
+        }
+    }
+    $ok = $false
+    for ($attempt = 1; $attempt -le 4 -and -not $ok; $attempt++) {
+        switch ($attempt) {
+            1 { Apply $target ($NOMOVE -bor $NOSIZE -bor $NOACTIVATE -bor $FRAMECHANGED) }
+            2 { Apply $other ($NOMOVE -bor $NOSIZE -bor $NOACTIVATE -bor $FRAMECHANGED); Start-Sleep -Milliseconds 120; Apply $target ($NOMOVE -bor $NOSIZE -bor $NOACTIVATE -bor $FRAMECHANGED) }
+            3 { foreach ($w in $script:hits) {
+                    $r = New-Object Win32TopMost3+RECT
+                    [void][Win32TopMost3]::GetWindowRect($w.H, [ref]$r)
+                    [void][Win32TopMost3]::SetWindowPos($w.H, $target, $r.Left, $r.Top, ($r.Right - $r.Left), ($r.Bottom - $r.Top), $NOACTIVATE -bor $FRAMECHANGED)
+                } }
+            4 { Apply $HWND_TOP ($NOMOVE -bor $NOSIZE -bor $NOACTIVATE -bor $FRAMECHANGED); Start-Sleep -Milliseconds 120; Apply $target ($NOMOVE -bor $NOSIZE -bor $NOACTIVATE -bor $FRAMECHANGED) }
+        }
+        Start-Sleep -Milliseconds 350
+        if (Test-Style) {
+            if (Test-Visual) { $ok = $true }
+            elseif ($attempt -ge 3) { $ok = $true }
+        }
+    }
+    foreach ($w in $script:hits) {
+        $style = [Win32TopMost3]::GetWindowLong($w.H, -20)
+        Write-Output "窗口[$($w.Class)] $($w.Title) → $(if ($style -band $TOPMOST_BIT) { 'TOPMOST' } else { '非置顶' })"
+    }
+    if (-not $ok) { throw "置顶状态未能在视觉层生效（已尝试 4 种强制手段）" }
     Write-Output "Excel 窗口已${action}（共 $($script:hits.Count) 个窗口）"
 } catch { Write-Error ($_ | Out-String) }
 `;
