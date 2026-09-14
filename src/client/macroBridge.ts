@@ -98,7 +98,7 @@ async function writeAtomic(filePath: string, content: string): Promise<void> {
 }
 
 export function startMacroBridge(options: MacroBridgeOptions): { stop: () => void } {
-  const intervalMs = options.intervalMs ?? 3000;
+  const intervalMs = options.intervalMs ?? 2500;
   const log = options.log ?? (() => {});
   const captured: CapturedDialog[] = [];
   const seenFingerprints = new Map<string, number>();
@@ -278,6 +278,7 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
     }
   }
 
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
   let pidMissCount = 0;
   async function tick(): Promise<void> {
     // 工作簿持有者消失检测（用户手工关闭 Excel 等）：以"是否存在可见的工作簿主窗口（XLMAIN）"
@@ -293,12 +294,25 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
           missing = false;
         }
         if (missing) {
-          pidMissCount++;
-          if (pidMissCount >= 2) {
+          // 800ms 后立即复检，不必等下一个完整轮询周期，把检测延迟压到 1-3 秒
+          await sleep(800);
+          let still = true;
+          try {
+            still = !(await hasVisibleWorkbookWindow(wb));
+          } catch {
+            still = true;
+          }
+          if (still) {
+            pidMissCount++;
+            log(`未检测到工作簿可见窗口（${pidMissCount}/2）`);
+            if (pidMissCount >= 2) {
+              pidMissCount = 0;
+              log("检测到 Excel 已被关闭且工作簿持有者消失，触发恢复");
+              await options.onWorkbookVanished();
+              return;
+            }
+          } else {
             pidMissCount = 0;
-            log("检测到 Excel 已被关闭且工作簿持有者消失，触发恢复");
-            await options.onWorkbookVanished();
-            return;
           }
         } else {
           pidMissCount = 0;

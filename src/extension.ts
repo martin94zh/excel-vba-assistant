@@ -47,7 +47,8 @@ const VBA_FILE_EXTENSIONS = [".bas", ".cls", ".frm", ".wks", ".wbk"];
 const AUTO_SYNC_DEBOUNCE_MS = 300;
 
 // Excel → 本地 自动同步轮询间隔。Excel/VBE 没有直接文件系统事件，只能轮询检测变更。
-const AUTO_VBE_TO_LOCAL_INTERVAL_MS = 3000;
+// 2000ms 是响应速度与 PowerShell 轮询开销的平衡点；再快需要常驻进程，暂不采用。
+const AUTO_VBE_TO_LOCAL_INTERVAL_MS = 2000;
 
 // 等待工作簿被打开的轮询间隔与超时（AI 的 MCP server 打开，或用户手动打开）
 const OPEN_WAITER_INTERVAL_MS = 3000;
@@ -488,9 +489,7 @@ async function handleSelectWorkbook(): Promise<void> {
     else if (dirChoice === "选择其他目录") await handleSelectSyncDirectory();
   }
 
-  vscode.window.showInformationMessage(
-    "Excel 已打开（前台可见）。直接在 AI 对话中提出要求即可，AI 会通过 excelcli 操作这个工作簿。"
-  );
+  vscode.window.showInformationMessage("Excel 已打开（前台可见），直接对 AI 说需求即可。");
   pushStateToWebview();
 }
 
@@ -1457,9 +1456,11 @@ async function applyExcelOnTopIfNeeded(): Promise<void> {
   if (!client) return;
   try {
     let result = await client.setWindowTopMost(true);
-    if (!result.success) {
-      await sleep(400);
+    let tries = 1;
+    while (!result.success && tries < 3) {
+      await sleep(500);
       result = await client.setWindowTopMost(true);
+      tries++;
     }
     if (result.success) {
       output.info("Excel 已置顶");
