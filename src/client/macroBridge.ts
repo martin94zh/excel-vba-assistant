@@ -68,6 +68,8 @@ export interface MacroBridgeOptions {
   getWorkbookPath?: () => string | null;
   /** 工作簿是否处于已连接/同步状态（消失检测仅在该状态下生效，等待打开阶段不触发） */
   isConnected?: () => boolean;
+  /** Excel 置顶开关是否开启（开启时周期性重申置顶，防止 AI 操作重置窗口层级） */
+  isTopMostEnabled?: () => boolean;
   /** 工作簿持有者消失（用户手工关闭 Excel 等）后的恢复回调：释放残留会话、复位状态 */
   onWorkbookVanished?: () => void | Promise<void>;
   intervalMs?: number;
@@ -96,7 +98,7 @@ async function writeAtomic(filePath: string, content: string): Promise<void> {
 }
 
 export function startMacroBridge(options: MacroBridgeOptions): { stop: () => void } {
-  const intervalMs = options.intervalMs ?? 2000;
+  const intervalMs = options.intervalMs ?? 3000;
   const log = options.log ?? (() => {});
   const captured: CapturedDialog[] = [];
   const seenFingerprints = new Map<string, number>();
@@ -235,7 +237,6 @@ export function startMacroBridge(options: MacroBridgeOptions): { stop: () => voi
     try {
       const wb = options.getWorkbookPath?.();
       if (!wb) return false;
-      const { findExcelPidForWorkbook } = await import("../native/processUtils");
       const pid = await findExcelPidForWorkbook(wb);
       if (!pid) return false;
       const { exec } = await import("child_process");
@@ -279,14 +280,17 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
 
   let pidMissCount = 0;
   async function tick(): Promise<void> {
-    // 工作簿持有者消失检测（用户手工关闭 Excel 等）：连续 2 次找不到持有者 PID → 触发恢复。
+    // 工作簿持有者消失检测（用户手工关闭 Excel 等）：用 COM 通道探测工作簿状态，
+    // 仅在明确"Excel 未运行/工作簿未打开"时计数（busy/未知不算，避免误关正在忙碌的 Excel）。
     // 仅在已连接状态下生效；等待打开阶段 PID 缺失属正常。
     if (options.onWorkbookVanished && options.isConnected?.()) {
       const wb = options.getWorkbookPath?.();
-      if (wb) {
+      const c = options.getClient();
+      if (wb && c) {
         let missing = false;
         try {
-          missing = !(await findExcelPidForWorkbook(wb));
+          const state = await c.workbookState();
+          missing = state === "noexcel" || state === "notfound";
         } catch {
           missing = false;
         }
@@ -301,6 +305,13 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
         } else {
           pidMissCount = 0;
         }
+      }
+    }
+    // 置顶周期性重申：AI 的窗口排列等操作可能重置层级
+    if (options.isTopMostEnabled?.() && !busy) {
+      const c = options.getClient();
+      if (c) {
+        void c.setWindowTopMost(true).catch(() => {});
       }
     }
     if (busy) return;

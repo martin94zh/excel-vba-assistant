@@ -978,6 +978,28 @@ try {
     return { success: false, message: result.message || "保存工作簿失败", output: result.output };
   }
 
+  /** 工作簿状态探测（COM 通道，区分"Excel 未运行/工作簿未打开/正常"，busy 时返回 unknown 而非误判） */
+  async workbookState(): Promise<"noexcel" | "notfound" | "ok" | "unknown"> {
+    const wbName = basename(this.filePath);
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    ${buildExcelAttachScript(this.excelProcessId)}
+} catch { Write-Output "NO_EXCEL"; exit 0 }
+try {
+    $found = $false
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $found = $true; break } }
+    if (-not $found) { Write-Output "WB_NOT_FOUND" } else { Write-Output "OK" }
+} catch { Write-Output "UNKNOWN" }
+`;
+    const result = await runPowerShell(script);
+    const out = (result.output || "").trim();
+    if (out === "OK") return "ok";
+    if (out === "WB_NOT_FOUND") return "notfound";
+    if (out === "NO_EXCEL") return "noexcel";
+    return "unknown";
+  }
+
   /** 列出当前 Excel/VBA 弹窗 */
   async listDialogs(): Promise<ExcelComResult> {
     return listExcelDialogs();
@@ -1302,40 +1324,62 @@ try {
   /** 设置 Excel 主窗口置顶或取消置顶（不经过 COM，直接调用 Win32 API） */
   async setWindowTopMost(onTop: boolean): Promise<ExcelComResult> {
     const action = onTop ? "置顶" : "取消置顶";
+    // 枚举该 Excel 进程的全部可见顶层窗口（XLMAIN 主窗口 + VBE 主窗口）逐一置顶，
+    // 并读回 WS_EX_TOPMOST 标志验证——Get-Process.MainWindowHandle 在多窗口时不可靠
     const script = `
 $ErrorActionPreference = "Stop"
 try {
     Add-Type @"
     using System;
     using System.Runtime.InteropServices;
-    public class Win32TopMost {
-        [DllImport(\"user32.dll\", SetLastError = true)]
-        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    using System.Text;
+    public class Win32TopMost2 {
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc c, IntPtr l);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr h);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);
     }
 "@
     $HWND_TOPMOST = [IntPtr]::new(-1)
     $HWND_NOTOPMOST = [IntPtr]::new(-2)
-    $SWP_NOMOVE = 0x0002
-    $SWP_NOSIZE = 0x0001
-
+    $SWP = 0x0001 -bor 0x0002 -bor 0x0010
     $targetPid = ${this.excelProcessId || 0}
-    $proc = $null
-    if ($targetPid -gt 0) {
-      $proc = Get-Process excel | Where-Object { $_.Id -eq $targetPid -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    }
-    if ($proc -eq $null) {
-      $proc = Get-Process excel | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    }
-    if ($proc -eq $null) { throw "未找到 Excel 进程" }
-    $hwnd = $proc.MainWindowHandle
-
+    if ($targetPid -le 0) { throw "未记录 Excel 进程 PID" }
+    $script:hits = New-Object System.Collections.Generic.List[object]
+    [Win32TopMost2]::EnumWindows({
+        param($h, $l)
+        if (-not [Win32TopMost2]::IsWindowVisible($h)) { return $true }
+        $p = [uint32]0; [void][Win32TopMost2]::GetWindowThreadProcessId($h, [ref]$p)
+        if ($p -ne $targetPid) { return $true }
+        $cls = New-Object System.Text.StringBuilder 256
+        [void][Win32TopMost2]::GetClassName($h, $cls, 256)
+        $c = $cls.ToString()
+        if ($c -ne "XLMAIN" -and -not $c.StartsWith("wndclass_desked_gsk")) { return $true }
+        $tb = New-Object System.Text.StringBuilder 256
+        [void][Win32TopMost2]::GetWindowText($h, $tb, 256)
+        $script:hits.Add(@{ H = $h; Class = $c; Title = $tb.ToString() }) | Out-Null
+        return $true
+    }, [IntPtr]::Zero) | Out-Null
+    if ($script:hits.Count -eq 0) { throw "未找到 Excel/VBE 窗口" }
     $target = if (${onTop ? "$true" : "$false"}) { $HWND_TOPMOST } else { $HWND_NOTOPMOST }
-    $result = [Win32TopMost]::SetWindowPos([IntPtr]::new([long]$hwnd), $target, 0, 0, 0, 0, $SWP_NOMOVE -bor $SWP_NOSIZE)
-    if ($result) {
-        Write-Output "Excel 窗口已${action}"
-    } else {
-        throw "SetWindowPos 调用失败"
+    $flag = 0x8
+    $ok = 0
+    foreach ($w in $script:hits) {
+        [void][Win32TopMost2]::SetWindowPos($w.H, $target, 0, 0, 0, 0, $SWP)
     }
+    Start-Sleep -Milliseconds 200
+    foreach ($w in $script:hits) {
+        $style = [Win32TopMost2]::GetWindowLong($w.H, -20)
+        $isTop = ([bool]($style -band $flag))
+        if (${onTop ? "$true" : "$false"}) { if ($isTop) { $ok++ } } else { if (-not $isTop) { $ok++ } }
+        Write-Output "窗口[$($w.Class)] $($w.Title) → $(if ($isTop) { 'TOPMOST' } else { '非置顶' })"
+    }
+    if ($ok -lt $script:hits.Count) { throw "部分窗口置顶状态未生效" }
+    Write-Output "Excel 窗口已${action}（共 $($script:hits.Count) 个窗口）"
 } catch { Write-Error ($_ | Out-String) }
 `;
     return runPowerShell(script);

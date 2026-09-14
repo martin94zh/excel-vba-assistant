@@ -190,7 +190,7 @@ excelcli -q vba update --session <id> --module-name Module1 --vba-code-file xxx.
 excelcli -q screenshot capture --session <id> ...                     # 截图验证
 ```
 
-想在终端手动验证？控制面板的「**复制 excelcli 路径与常用命令**」一键复制完整路径模板。
+想在终端手动验证？命令面板执行 `Excel VBA: 复制 excelcli 路径与常用命令` 一键复制完整路径模板。
 
 ### 4. AI 宏开发循环（核心特性）
 

@@ -102,6 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
     getSyncDir: () => stateManager.get("syncDirectory") || null,
     getWorkbookPath: () => stateManager.get("workbookPath") || null,
     isConnected: () => ["connected", "syncing", "synced"].includes(stateManager.getAll().serviceStatus),
+    isTopMostEnabled: () => stateManager.get("keepExcelOnTop"),
     onWorkbookVanished: () => handleWorkbookVanished(),
     log: (m) => output.info(m),
     notify: (m) => {
@@ -623,23 +624,16 @@ async function handleDisconnectExcel(): Promise<void> {
   // 状态清空后立即刷新面板，让用户看到重置效果
   pushStateToWebview();
 
-  // 第五步：执行可能耗时的 UI/文件清理
-  // 取消 Excel 窗口置顶（使用 COM）
-  if (keepOnTop && workbookPath) {
-    try {
-      const client = new VbaClient(workbookPath, excelProcessId || undefined);
-      const result = await client.setWindowTopMost(false);
-      if (result.success) {
-        output.info("已取消 Excel 置顶");
-      } else {
-        output.warn(`取消 Excel 置顶失败：${result.message}`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      output.warn(`取消 Excel 置顶失败：${msg}`);
-    }
-  }
+  // 第五步：执行可能耗时的 UI/文件清理（工作区/自动目录，与消失恢复共用）
+  await cleanupSyncArtifacts(syncDir, autoCreated);
 
+  output.info("服务状态已重置");
+  viewProvider.refresh();
+  vscode.window.showInformationMessage("已断开与 Excel 的连接");
+}
+
+/** 断开/消失恢复共用的目录与工作区清理 */
+async function cleanupSyncArtifacts(syncDir: string, autoCreated: boolean): Promise<void> {
   // 从工作区中移除同步目录根文件夹（如果它是作为根目录添加的）
   const folders = vscode.workspace.workspaceFolders;
   if (folders && syncDir) {
@@ -649,18 +643,13 @@ async function handleDisconnectExcel(): Promise<void> {
       output.info(`已从工作区移除同步目录：${syncDir}`);
     }
   }
-
   // 尝试删除自动创建的同步目录，删除失败也不阻塞后续清理
   if (syncDir && autoCreated) {
     const removed = await removeAutoCreatedSyncDir(syncDir);
     if (!removed) {
-      output.warn("手动断开：自动同步目录删除失败，将保留目录但清空插件状态");
+      output.warn("自动同步目录删除失败，将保留目录但清空插件状态");
     }
   }
-
-  output.info("服务状态已重置");
-  viewProvider.refresh();
-  vscode.window.showInformationMessage("已断开与 Excel 的连接");
 }
 
 /**
@@ -686,6 +675,13 @@ async function handleWorkbookVanished(): Promise<void> {
     }
   }
 
+  const vanishSyncDir = stateManager.get("syncDirectory");
+  const vanishAutoCreated = stateManager.get("syncDirectoryAutoCreated");
+  await cleanupSyncArtifacts(vanishSyncDir, vanishAutoCreated);
+  await stateManager.set("workbookPath", "");
+  await stateManager.set("syncDirectory", "");
+  await stateManager.set("syncDirectoryAutoCreated", false);
+  await stateManager.set("keepExcelOnTop", false);
   await stateManager.set("excelProcessId", 0);
   await stateManager.set("cliSessionId", "");
   pendingChanges = [];
