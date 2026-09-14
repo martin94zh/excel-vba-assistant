@@ -9,7 +9,7 @@
 
 你选择 Excel 文件，插件把它**前台可见地打开**；AI 通过命令行工具对同一个 Excel 增删改查（数据、表格、图表、透视表、Power Query、DAX、VBA……），你全程看得到每一步；插件同步引擎让 **VBA 代码在 Excel 与编辑器之间双向实时同步**——你在 Excel 里手改宏，编辑器里立刻出现；AI 改宏、跑宏、报错弹窗自动抓取，形成完整的 AI 宏开发闭环。
 
-> 当前版本：**v0.9.2** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
+> 当前版本：**v0.9.3** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
 
 ---
 
@@ -84,7 +84,7 @@
 
 **方式 A：下载安装包（推荐）**
 
-1. 下载 [excel-vba-assistant-0.9.2.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.2/excel-vba-assistant-0.9.2.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
+1. 下载 [excel-vba-assistant-0.9.3.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.3/excel-vba-assistant-0.9.3.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
 2. Trae / VS Code 中按 `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → 选择文件
 3. 重新加载窗口
 
@@ -94,7 +94,7 @@
 git clone https://github.com/martin94zh/excel-vba-assistant.git
 cd excel-vba-assistant
 npm install
-npm run package    # 生成 excel-vba-assistant-0.9.2.vsix
+npm run package    # 生成 excel-vba-assistant-0.9.3.vsix
 ```
 
 ### 六步上手
@@ -198,20 +198,24 @@ AI 修改宏后需要**运行、看报错、读结果、再修正**。本插件�
 ```json
 {
   "macro": "Module1.ProcessData",
-  "timeoutMs": 30000,
+  "timeoutMs": 90000,
   "dialogMode": "auto",
   "confirmButton": "是",
-  "inputValue": "42"
+  "inputValue": "42",
+  "saveAfterRun": true
 }
 ```
 
 | 字段 | 说明 |
 |------|------|
 | `macro` | 要运行的过程，格式 `模块名.过程名` |
-| `timeoutMs` | 运行超时（默认 45000） |
+| `timeoutMs` | 运行超时（默认 45000；**首次运行新宏建议 90000**，VBA 编译较慢） |
 | `dialogMode` | `auto`（默认）：自动处理全部弹窗；`errors`：仅自动结束报错弹窗 |
 | `confirmButton` | 宏内"是/否"确认框点击的按钮（默认"取消"安全值） |
 | `inputValue` | 宏内 InputBox 自动填入的文本 |
+| `saveAfterRun` | 运行成功后**自动保存工作簿**（CLI 无 save 动作，这是推荐保存方式） |
+
+> 文件编码兼容 UTF-8 BOM（PowerShell `Set-Content -Encoding UTF8` 写出也可识别）。
 
 **弹窗自动处理矩阵：**
 
@@ -242,6 +246,9 @@ AI 修改宏后需要**运行、看报错、读结果、再修正**。本插件�
 
 AI 拿到报错全文 → 修正代码 → 重新运行 → `range get-values` 读取结果 → 循环直到通过。
 另外，最近 20 条错误弹窗始终保留在同步目录 `excel-dialogs.json`，插件宿主也会弹 VS Code 通知。
+
+> **超时 ≠ 失败**：宏首次运行需要 VBA 编译，耗时较长。结果文件会带 `macroStillRunning` 状态——
+> 为 true 时请等待重查而非立即重跑（非幂等宏会重复执行）；超时后也应先读取结果单元格检查副作用。
 
 > 全程**不使用键盘模拟**：按钮点击走 Win32 消息（BM_CLICK）与 UIAutomation，VBE 重置走 COM 菜单命令——**绝不干扰你正在前台的编辑操作**。
 

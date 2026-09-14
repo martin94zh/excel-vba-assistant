@@ -142,7 +142,7 @@ async function main(): Promise<void> {
   } catch (e: any) {
     console.log("  [warn] vba update 失败:", String(e.message).slice(0, 200));
   }
-  writeFileSync(join(syncDir, "macro-run.json"), JSON.stringify({ macro: "Module1.E2E_Result2", timeoutMs: 30000 }), "utf-8");
+  writeFileSync(join(syncDir, "macro-run.json"), JSON.stringify({ macro: "Module1.E2E_Result2", timeoutMs: 30000, saveAfterRun: true }), "utf-8");
   const r3 = await waitResult(RESULT_WAIT_MS);
   assert("场景3 正常宏：success=true", r3?.success === true, r3?.message || "");
   assert("场景3 Excel 仍存活", await excelAlive(), "");

@@ -955,6 +955,29 @@ try {
     });
   }
 
+  /** 保存当前工作簿（excelcli 无直接 save 动作，此为 COM 通道补位） */
+  async saveWorkbook(): Promise<ExcelComResult> {
+    const wbName = basename(this.filePath);
+    const preCheck = await ensureExcelRunning(wbName, this.excelProcessId);
+    if (preCheck) return preCheck;
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    ${buildExcelAttachScript(this.excelProcessId)}
+    $wb = $null
+    foreach ($w in $excel.Workbooks) { if ($w.Name -eq '${escapePowerShellSingleQuoted(wbName)}') { $wb = $w; break } }
+    if ($wb -eq $null) { throw "未找到工作簿 ${escapePowerShellSingleQuoted(wbName)}" }
+    $wb.Save()
+    Write-Output "SAVED"
+} catch { Write-Error ($_ | Out-String) }
+`;
+    const result = await runPowerShell(script);
+    if (result.success && (result.output || "").includes("SAVED")) {
+      return { success: true, message: `工作簿 ${wbName} 已保存` };
+    }
+    return { success: false, message: result.message || "保存工作簿失败", output: result.output };
+  }
+
   /** 列出当前 Excel/VBA 弹窗 */
   async listDialogs(): Promise<ExcelComResult> {
     return listExcelDialogs();

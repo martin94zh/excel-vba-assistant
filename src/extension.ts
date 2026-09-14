@@ -99,12 +99,18 @@ export function activate(context: vscode.ExtensionContext): void {
       return new VbaClient(wb, stateManager.get("excelProcessId") || undefined);
     },
     getSyncDir: () => stateManager.get("syncDirectory") || null,
+    getWorkbookPath: () => stateManager.get("workbookPath") || null,
     log: (m) => output.info(m),
     notify: (m) => {
       void vscode.window.showWarningMessage(m);
     },
   });
   context.subscriptions.push({ dispose: () => macroBridge?.stop() });
+
+  // 清理旧版本（v0.8.x MCP 架构）遗留的 .trae/mcp.json：
+  // 残留的 excel-mcp 服务器会让 AI 优先尝试互斥的 MCP 通道（报 already open / 抢占文件），
+  // 必须在激活时即清除，不能等停用
+  void removeLegacyMcpConfig();
 
   viewProvider = new ExcelVbaPanelProvider(context.extensionUri, stateManager, (msg) => {
     void handleWebviewMessage(msg);

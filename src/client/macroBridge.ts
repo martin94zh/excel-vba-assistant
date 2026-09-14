@@ -29,6 +29,8 @@ export interface MacroRunRequest {
   confirmButton?: string;
   /** InputBox 自动填入的文本 */
   inputValue?: string;
+  /** 运行成功后自动保存工作簿（宏可能报错时不保存，避免固化坏状态） */
+  saveAfterRun?: boolean;
 }
 
 export interface CapturedDialog {
@@ -50,6 +52,10 @@ export interface MacroRunResultFile {
   output?: string;
   dialogs: CapturedDialog[];
   error?: string;
+  /** 超时场景：宏是否仍在 Excel 中运行（true 时不要立即重跑，避免重复执行） */
+  macroStillRunning?: boolean;
+  /** saveAfterRun 请求的保存结果 */
+  saved?: boolean;
 }
 
 export interface MacroBridgeOptions {
@@ -57,6 +63,8 @@ export interface MacroBridgeOptions {
   getClient: () => VbaClient | null;
   /** 返回当前同步目录；未设置时返回 null（桥接文件无处安放，轮询空转） */
   getSyncDir: () => string | null;
+  /** 返回当前工作簿路径（用于超时后的运行状态检测） */
+  getWorkbookPath?: () => string | null;
   intervalMs?: number;
   log?: (message: string) => void;
   /** 检测到新的错误弹窗时回调（VS Code 宿主中显示警告通知） */
@@ -148,6 +156,8 @@ export function startMacroBridge(options: MacroBridgeOptions): { stop: () => voi
   }
 
   async function runBridgeMacro(client: VbaClient, syncDir: string, raw: string): Promise<void> {
+    // 兼容 PowerShell Set-Content -Encoding UTF8 等 write：剥除 UTF-8 BOM
+    raw = raw.replace(/^\uFEFF/, "");
     let req: MacroRunRequest | null = null;
     try {
       req = JSON.parse(raw) as MacroRunRequest;
@@ -192,8 +202,74 @@ export function startMacroBridge(options: MacroBridgeOptions): { stop: () => voi
       dialogs,
     };
     if (!result.success) payload.error = "macro_failed";
+
+    // 超时 ≠ 失败：宏可能仍在运行或已实际执行完毕，给 AI 明确状态提示
+    if (!result.success && /超时|timeout/i.test(result.message)) {
+      const stillRunning = await isMacroStillRunning();
+      payload.macroStillRunning = stillRunning;
+      payload.message = stillRunning
+        ? `${result.message}（宏可能仍在运行：请稍后重查结果，不要立即重跑以免重复执行）`
+        : `${result.message}（宏已结束：请先用 range get-values 检查副作用，确认后再决定是否重跑）`;
+    }
+
+    // 运行成功后按需保存工作簿（失败时不保存，避免固化坏状态）
+    if (req.saveAfterRun && result.success) {
+      const saveResult = await client.saveWorkbook();
+      payload.saved = saveResult.success;
+      if (!saveResult.success) {
+        payload.message = `${payload.message}；自动保存失败：${saveResult.message}`;
+      }
+    }
+
     await writeAtomic(join(syncDir, RUN_RESULT_FILE), JSON.stringify(payload, null, 2));
     log(`宏运行桥：${req.macro} → ${result.success ? "成功" : "失败"}（${dialogs.length} 个弹窗记录）`);
+  }
+
+  /** 通过 VBE 主窗口标题判断宏是否仍在运行/中断（[正在运行]/[中断]/[break]） */
+  async function isMacroStillRunning(): Promise<boolean> {
+    try {
+      const wb = options.getWorkbookPath?.();
+      if (!wb) return false;
+      const { findExcelPidForWorkbook } = await import("../native/processUtils");
+      const pid = await findExcelPidForWorkbook(wb);
+      if (!pid) return false;
+      const { exec } = await import("child_process");
+      const { promisify } = await import("util");
+      const execAsync = promisify(exec);
+      const script = `
+$ErrorActionPreference = "Stop"
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class BridgeVbeTitle {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint p);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+}
+"@
+$script:vt = ""
+[BridgeVbeTitle]::EnumWindows({
+  param($h, $l)
+  if (-not [BridgeVbeTitle]::IsWindowVisible($h)) { return $true }
+  $p = [uint32]0; [void][BridgeVbeTitle]::GetWindowThreadProcessId($h, [ref]$p)
+  if ($p -ne ${pid}) { return $true }
+  $sb = New-Object System.Text.StringBuilder 512
+  [void][BridgeVbeTitle]::GetWindowText($h, $sb, 512)
+  $t = $sb.ToString()
+  if ($t -like "Microsoft Visual Basic*") { $script:vt = $t; return $false }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]') { Write-Output "running" } else { Write-Output "done" }
+`;
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      const probe = await execAsync(`powershell -NoProfile -EncodedCommand ${encoded}`, { timeout: 20000, encoding: "utf-8" });
+      return (probe.stdout || "").trim() === "running";
+    } catch {
+      return false;
+    }
   }
 
   async function tick(): Promise<void> {

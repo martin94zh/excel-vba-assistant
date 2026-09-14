@@ -44,30 +44,45 @@ description: >
 
 ## 宏开发循环（改宏 → 跑宏 → 抓报错 → 读结果 → 再改）
 
+> **通道路由（必读）**：如果环境中存在旧版 `excel-mcp` MCP 工具（`file`/`range` 等），**不要使用**——
+> 它们自建独占会话，与插件的 daemon 会话互斥：插件已打开的文件用 MCP open 必然报
+> "already open"，反过来 MCP 打开的文件插件也无法附着。遇到 "already open" 的正确解法：
+> `excelcli -q session list` 找插件会话，走本节流程。所有 Excel 操作一律走 excelcli。
+
 AI 修改 VBA 后测试宏，**必须走插件的宏运行桥**（能抓取报错/MsgBox/InputBox 弹窗全文、自动交互、Excel 不会被杀）。
 说明：官方 excel-cli 文档的 `vba run` 不处理任何弹窗——含 MsgBox/InputBox 的真实宏用它运行必然卡死，
 本插件的宏运行桥专为此设计，两者不重复：**桥=测试运行，CLI vba run=仅限已验证无弹窗的宏**。
 
 1. `vba update`（excelcli）写入/修改模块代码
-2. 用文件工具向**同步目录**写 `macro-run.json`（UTF-8）：
-   ```json
-   {
-     "macro": "Module1.YourProc",
-     "timeoutMs": 30000,
-     "dialogMode": "auto",
-     "confirmButton": "是",
-     "inputValue": "42"
-   }
+2. 用文件工具向**同步目录**写 `macro-run.json`（UTF-8）。PowerShell 写法（务必无 BOM）：
+   ```powershell
+   $req = @'
+   {"macro": "Module1.YourProc", "timeoutMs": 90000, "dialogMode": "auto",
+    "confirmButton": "是", "inputValue": "42", "saveAfterRun": true}
+   '@
+   [IO.File]::WriteAllText("<同步目录>\macro-run.json", $req, [Text.UTF8Encoding]::new($false))
    ```
-   - `dialogMode`：`auto`（默认）自动处理全部弹窗；`errors` 仅自动结束报错弹窗
-   - `confirmButton`：宏内 `MsgBox vbYesNo` 确认框点哪个按钮（默认"取消"，可指定"是"）
-   - `inputValue`：宏内 `InputBox` 自动填入的文本
+   | 字段 | 说明 |
+   |------|------|
+   | `macro` | 过程名，格式 `模块名.过程名` |
+   | `timeoutMs` | 默认 45000。**首次运行新宏建议 90000**（VBA 编译 + 首次执行较慢） |
+   | `dialogMode` | `auto`（默认）自动处理全部弹窗；`errors` 仅自动结束报错弹窗 |
+   | `confirmButton` | 宏内 `MsgBox vbYesNo` 确认框点哪个按钮（默认"取消"，可指定"是"） |
+   | `inputValue` | 宏内 `InputBox` 自动填入的文本 |
+   | `saveAfterRun` | `true` = 运行成功后自动保存工作簿（CLI 没有 save 动作，这是推荐的保存方式） |
 3. 轮询读取同目录 `macro-run-result.json`（文件出现即为运行完成）：
    - `success=false` 时 `dialogs[]` 含报错弹窗的标题与**全文**（如"运行时错误 '11': 除数为零"、
      "编译错误: 子过程或函数未定义"），弹窗已被自动关闭，按报错内容修正代码
    - `success=true` 时 `dialogs[]` 记录宏触发的 MsgBox/InputBox 内容与自动操作
      （如 MsgBox 文本"处理完成：10 行"已被点确定）——**用它验证宏的交互行为是否符合预期**
+   - **超时 ≠ 失败**：结果含 `macroStillRunning: true` 表示宏还在跑，等待后重查；
+     即使超时，宏也可能已实际执行完毕——先 `range get-values` 检查副作用，**确认后再决定是否重跑**，
+     避免非幂等宏重复执行
+   - `saved: true` 表示工作簿已自动保存
 4. `range get-values` 读取运行结果单元格，依据结果继续修改，重复 1-4
+
+保存工作簿的三种方式：`saveAfterRun: true`（推荐，随桥运行自动保存）；桥接运行一个
+`ThisWorkbook.Save` 宏；`session close --save`（会关闭会话，仅在彻底结束时用）。
 
 注意事项：
 
