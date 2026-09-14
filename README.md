@@ -4,7 +4,7 @@ Excel VBA 本地同步器 + AI 编程桥接器：在 Trae / VS Code 中管理、
 
 本插件的 AI 自动化能力基于 [`sbroenne/mcp-server-excel`](https://github.com/sbroenne/mcp-server-excel) 2.0.8 的 **CLI（excelcli.exe）**：插件通过共享后台 daemon 打开工作簿（**Excel 前台可见**），AI 用 `excelcli` 命令操作**同一会话**，覆盖 **31 组命令、326 操作**（VBA、工作表、单元格、格式、Excel 表格、数据透视表、图表、Power Query、DAX 数据模型、命名区域、数据连接、切片器、条件格式、截图、窗口管理等）；插件自身通过 COM 附着同一 Excel 实例，负责 VBE ↔ 本地双向同步、宏运行与状态管理。
 
-> 当前版本：**v0.9.1**
+> 当前版本：**v0.9.2**
 
 ---
 
@@ -116,7 +116,7 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 ### 方式 A：从 GitHub Release 下载安装（推荐）
 
-**下载地址**：[excel-vba-assistant-0.9.1.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.1/excel-vba-assistant-0.9.1.vsix)
+**下载地址**：[excel-vba-assistant-0.9.2.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.2/excel-vba-assistant-0.9.2.vsix)
 
 或前往 [Releases 页面](https://github.com/martin94zh/excel-vba-assistant/releases) 下载最新版本。
 
@@ -124,7 +124,7 @@ VBA 项目对象模型默认不允许程序访问，必须先开启：
 
 1. 从上述链接下载 `.vsix` 文件
 2. 在 Trae / VS Code 中按 `Ctrl+Shift+P`，执行 **`Extensions: Install from VSIX...`**
-3. 选择下载的 `excel-vba-assistant-0.9.1.vsix` 文件
+3. 选择下载的 `excel-vba-assistant-0.9.2.vsix` 文件
 4. 安装完成后重新加载窗口即可
 
 > 安装包已内置 `excelcli.exe`（来自 `sbroenne/mcp-server-excel` 2.0.8），**无需联网下载**，也无需用户本机安装 Node.js。
@@ -475,7 +475,7 @@ AI 遵循的约定：先读指引再操作；危险操作确认后再执行；�
 
 ```powershell
 npm run package
-# 生成 excel-vba-assistant-0.9.1.vsix
+# 生成 excel-vba-assistant-0.9.2.vsix
 ```
 
 ### 查看日志

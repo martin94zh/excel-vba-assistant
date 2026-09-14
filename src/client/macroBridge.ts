@@ -18,10 +18,17 @@ import { existsSync } from "fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { VbaClient } from "./vbaClient";
+import type { MacroDialogPolicy } from "./vbaMacroRunner";
 
 export interface MacroRunRequest {
   macro: string;
   timeoutMs?: number;
+  /** 交互弹窗处理：auto = MsgBox 自动点确定/确认框点 confirmButton/InputBox 填 inputValue（默认，AI 测试场景） */
+  dialogMode?: "auto" | "errors";
+  /** 确认（是/否）对话框点击的按钮，默认"取消" */
+  confirmButton?: string;
+  /** InputBox 自动填入的文本 */
+  inputValue?: string;
 }
 
 export interface CapturedDialog {
@@ -159,7 +166,12 @@ export function startMacroBridge(options: MacroBridgeOptions): { stop: () => voi
       return;
     }
     log(`宏运行桥：执行 ${req.macro}`);
-    const result = await client.runMacro(req.macro, { timeoutMs: req.timeoutMs ?? 45000 });
+    const policy: MacroDialogPolicy = {
+      mode: req.dialogMode ?? "auto",
+      confirmButton: req.confirmButton,
+      inputValue: req.inputValue,
+    };
+    const result = await client.runMacro(req.macro, { timeoutMs: req.timeoutMs ?? 45000, dialogPolicy: policy });
     const dialogs = ((result.details?.dialogs as Array<{ kind?: string; title?: string; text?: string; buttons?: string[]; autoHandled?: boolean; autoAction?: string }>) || []).map((d) => ({
       time: new Date().toISOString(),
       kind: d.kind || "unknown",

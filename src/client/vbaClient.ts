@@ -945,12 +945,13 @@ try {
   /** 运行无参数宏 */
   async runMacro(
     macroName: string,
-    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean } = {}
+    options: { timeoutMs?: number; captureResultRange?: string; silent?: boolean; dialogPolicy?: import("./vbaMacroRunner").MacroDialogPolicy } = {}
   ): Promise<ExcelComResult> {
     return runMacroWithDialogHandling(this.filePath, macroName, {
       timeoutMs: options.timeoutMs,
       captureResultRange: options.captureResultRange,
       excelProcessId: this.excelProcessId,
+      dialogPolicy: options.dialogPolicy,
     });
   }
 

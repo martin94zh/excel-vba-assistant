@@ -34,6 +34,18 @@ export interface MacroDialogInfo {
   kind?: "vb_runtime_error" | "error" | "confirmation" | "info" | "unknown";
   autoHandled?: boolean;
   autoAction?: string;
+  /** 弹窗中是否含输入框（InputBox 类） */
+  hasEdit?: boolean;
+}
+
+/** 宏运行时的交互弹窗处理策略（宏运行桥的 AI 测试场景使用全自动模式） */
+export interface MacroDialogPolicy {
+  /** auto = 弹窗全自动处理（MsgBox 点确定、确认框点 confirmButton、InputBox 填 inputValue）；errors = 仅自动处理错误弹窗（默认） */
+  mode?: "auto" | "errors";
+  /** 确认（是/否）对话框点击的按钮，默认"取消"（安全值） */
+  confirmButton?: string;
+  /** InputBox 自动填入的文本（填入后提交） */
+  inputValue?: string;
 }
 
 interface MacroRunnerStatus {
@@ -49,7 +61,7 @@ const MACRO_DIALOG_STABLE_MS = 450;
 const MACRO_RUNNER_STATUS_GRACE_MS = 1200;
 const MACRO_RUNNER_STATUS_POLL_MS = 100;
 const SUPPORTED_DIALOG_PROCESS_PATTERN = "^(?i)(excel|et|wps)$";
-const SUPPORTED_DIALOG_TITLE_PATTERN = "(?i)(microsoft excel|microsoft visual basic|excel|visual basic|wps|kingsoft|et)";
+const SUPPORTED_DIALOG_TITLE_PATTERN = "(?i)(microsoft excel|microsoft visual basic|excel|visual basic|wps|kingsoft|et|调用堆栈|call stack)";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,16 +78,14 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 
 function classifyMacroDialog(dialog: MacroDialogInfo): MacroDialogInfo["kind"] {
-  const haystack = `${dialog.title}\n${dialog.text}\n${dialog.buttons.join(" ")}`.toLowerCase();
-  if (
-    haystack.includes("microsoft visual basic")
-    || haystack.includes("运行时错误")
-    || haystack.includes("compile error")
-    || haystack.includes("编译错误")
-    || haystack.includes("debug")
-  ) {
+  const cleanTitle = dialog.title.trim();
+  const body = `${dialog.title}\n${dialog.text}`;
+  // VBA 错误弹窗的标题恰好是 "Microsoft Visual Basic [for Applications]"（无后缀）；
+  // VBE 主窗口/代码窗口标题带 " - 文件 [中断] - 模块" 等后缀，不能凭包含关系误判
+  if (/^microsoft visual basic( for applications)?$/i.test(cleanTitle) || /运行时错误|编译错误|compile error/i.test(body)) {
     return "vb_runtime_error";
   }
+  const haystack = `${cleanTitle}\n${dialog.text}\n${dialog.buttons.join(" ")}`.toLowerCase();
   if (
     haystack.includes("error")
     || haystack.includes("错误")
@@ -115,6 +125,15 @@ function buildDialogFingerprint(dialog: Pick<MacroDialogInfo, "processName" | "t
 }
 
 function pickDialogAction(dialog: MacroDialogInfo): { buttons: string[]; actionLabel: string; terminal: boolean } | null {
+  const haystack = `${dialog.title}\n${dialog.text}\n${dialog.buttons.join(" ")}`;
+  // 调用堆栈窗口：中断模式的伴生窗口，直接关闭
+  if (/调用堆栈|call stack/i.test(dialog.title)) {
+    return { buttons: ["关闭", "Close"], actionLabel: "关闭", terminal: false };
+  }
+  // VBE 中断模式下修改代码时的系统恢复确认框，点"是"即重置工程（解除阻塞的正确恢复动作）
+  if (/重新设置工程|reset the project/i.test(haystack)) {
+    return { buttons: ["是", "Yes", "确定", "OK"], actionLabel: "是", terminal: true };
+  }
   const kind = dialog.kind || classifyMacroDialog(dialog);
   switch (kind) {
     case "vb_runtime_error":
@@ -348,17 +367,25 @@ $results = New-Object System.Collections.Generic.List[object]
   if ($processName -notmatch '${SUPPORTED_DIALOG_PROCESS_PATTERN}') { return $true }
   $buttons = New-Object System.Collections.Generic.List[string]
   $textParts = New-Object System.Collections.Generic.List[string]
+  $script:hasEdit = $false
   [VbeWin32]::EnumChildWindows($hWnd, {
     param($childHwnd, $childLparam)
     if (-not [VbeWin32]::IsWindowVisible($childHwnd)) { return $true }
+    $childClass = Get-ClassNameSafe $childHwnd
+    # 输入框类控件先于空文本判断：InputBox 的 Edit 初始内容为空，不能因空文本跳过
+    if ($childClass -in @("Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W")) {
+      $script:hasEdit = $true
+      $childText2 = Get-WindowTextSafe $childHwnd
+      if (-not [string]::IsNullOrWhiteSpace($childText2) -and -not $textParts.Contains($childText2)) { $textParts.Add($childText2) | Out-Null }
+      return $true
+    }
     $childText = Get-WindowTextSafe $childHwnd
     if ([string]::IsNullOrWhiteSpace($childText)) { return $true }
-    $childClass = Get-ClassNameSafe $childHwnd
     if ($childClass -eq "Button") {
       if (-not $buttons.Contains($childText)) { $buttons.Add($childText) | Out-Null }
       return $true
     }
-    if ($childClass -in @("Static", "Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W")) {
+    if ($childClass -eq "Static") {
       if (-not $textParts.Contains($childText)) { $textParts.Add($childText) | Out-Null }
     }
     return $true
@@ -387,6 +414,7 @@ $results = New-Object System.Collections.Generic.List[object]
     className = $className
     text = $combinedText
     buttons = @($buttons | Select-Object -Unique)
+    hasEdit = [bool]$hasEdit
     width = $width
     height = $height
   }) | Out-Null
@@ -511,7 +539,7 @@ if ($null -eq $match) {
 }
 try {
   [void][VbeClickWin32]::SendMessage($match.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
-  Start-Sleep -Milliseconds 150
+  Start-Sleep -Milliseconds 200
   if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
     Write-Output "true"
     exit 0
@@ -523,18 +551,8 @@ try {
       $invoke.Invoke()
     }
   } catch {}
-  Start-Sleep -Milliseconds 150
-  if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
-    Write-Output "true"
-    exit 0
-  }
-  try {
-    [void][VbeClickWin32]::SetForegroundWindow($target)
-    $wshell = New-Object -ComObject WScript.Shell
-    [void]$wshell.AppActivate((Get-WindowTextSafe $target))
-    $wshell.SendKeys("{ENTER}")
-  } catch {}
-  Start-Sleep -Milliseconds 150
+  Start-Sleep -Milliseconds 200
+  # 不做键盘模拟（SendKeys 会落入用户前台窗口），消息级点击 + UIA 已覆盖全部实测场景
   if (-not [VbeClickWin32]::IsWindow($target) -or -not [VbeClickWin32]::IsWindowVisible($target)) {
     Write-Output "true"
   } else {
@@ -549,74 +567,174 @@ try {
 }
 
 /**
- * 编译错误弹窗点击"确定"后 VBE 会进入中断模式（Run 调用挂起不返回），
- * 对 VBE 主窗口发送 Run > 重置（Alt+R, R）恢复设计模式。
+ * 编译错误弹窗点击"确定"后 VBE 会进入中断模式（Run 调用挂起不返回）。
+ * 通过新鲜 COM 附着程序化执行 VBE 菜单：中断（id=189，运行态时先转中断）→
+ * 重新设置（id=228，中断态专属项）。全程 CommandBars/Win32 消息完成，
+ * 不使用任何键盘模拟，不影响用户前台操作。
+ * 重置确认框（"该操作将重新设置工程"）用 BM_CLICK 自动点"确定"。
  */
 export async function resetVbeInterrupt(processId: number): Promise<boolean> {
-  const script = `
-$ErrorActionPreference = "Stop"
-Add-Type @"
-using System;
-using System.Text;
-using System.Runtime.InteropServices;
-public static class VbeResetWin32 {
-  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-  [DllImport("user32.dll")]
-  [return: MarshalAs(UnmanagedType.Bool)]
-  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
-  [DllImport("user32.dll")]
-  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
-  [DllImport("user32.dll")]
-  [return: MarshalAs(UnmanagedType.Bool)]
-  public static extern bool IsWindowVisible(IntPtr hWnd);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int nMaxCount);
-}
-"@
-$targetPid = ${processId}
-$script:foundTitle = ""
-[VbeResetWin32]::EnumWindows({
-  param($hWnd, $lParam)
-  if (-not [VbeResetWin32]::IsWindowVisible($hWnd)) { return $true }
-  $winPid = [uint32]0
-  [void][VbeResetWin32]::GetWindowThreadProcessId($hWnd, [ref]$winPid)
-  if ($winPid -ne $targetPid) { return $true }
-  $sb = New-Object System.Text.StringBuilder 512
-  [void][VbeResetWin32]::GetWindowText($hWnd, $sb, 512)
-  $t = $sb.ToString()
-  if ($t -like "Microsoft Visual Basic*") { $script:foundTitle = $t; return $false }
-  return $true
-}, [IntPtr]::Zero) | Out-Null
-if ($script:foundTitle -eq "") {
-  Write-Output "novbe"
-  exit 0
-}
-Add-Type -AssemblyName Microsoft.VisualBasic
-try {
-  [Microsoft.VisualBasic.Interaction]::AppActivate($script:foundTitle)
-  Start-Sleep -Milliseconds 200
-  $wshell = New-Object -ComObject WScript.Shell
-  # Alt+R 打开"运行"菜单，R 选择"重置"
-  $wshell.SendKeys("%r")
-  Start-Sleep -Milliseconds 150
-  $wshell.SendKeys("r")
-  Start-Sleep -Milliseconds 300
-  Write-Output "reset"
-} catch {
-  Write-Output "keysfail"
-}
-`;
-  const result = await runPowerShell(script, 20000);
-  const out = (result.output || "").trim();
-  logReset?.(`VBE 重置: ${out || result.message}`);
-  return out === "reset";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const out = await resetVbeViaCommandBars(processId);
+    if (out === "novbe" || out === "reset") return out === "reset" || attempt > 0;
+    await sleep(1000);
+  }
+  return false;
 }
 
-/** 重置动作的日志回调（由插件宿主注入；测试台可空） */
-let logReset: ((message: string) => void) | undefined;
-export function setMacroRunnerLogger(fn: (message: string) => void): void {
-  logReset = fn;
+async function resetVbeViaCommandBars(processId: number): Promise<string> {
+  const script = `
+$ErrorActionPreference = "Stop"
+${VBE_RESET_PS}
+$targetPid = ${processId}
+$state = Get-VbeState $targetPid
+Write-Output "STATE=$state"
+if ($state -eq "novbe" -or $state -eq "design") { Write-Output "nobreak"; exit 0 }
+$excel = Attach-Excel $targetPid
+$vbe = $excel.VBE
+# 运行态先中断，再重置
+if ($state -eq "running") {
+  $brk = $vbe.CommandBars.FindControl([Type]::Missing, 189)
+  if ($null -ne $brk) { $brk.Execute(); Start-Sleep -Milliseconds 800 }
 }
+$reset = $vbe.CommandBars.FindControl([Type]::Missing, 228)
+if ($null -eq $reset) { Write-Output "noreset"; exit 0 }
+$reset.Execute()
+Write-Output "EXECUTED"
+Start-Sleep -Milliseconds 600
+# 自动点击"该操作将重新设置工程"确认框（BM_CLICK，无需键盘/前台）
+for ($i = 0; $i -lt 5; $i++) {
+  $clicked = Invoke-ResetConfirmClick $targetPid
+  if ($clicked) { break }
+  Start-Sleep -Milliseconds 500
+}
+Start-Sleep -Milliseconds 800
+$final = Get-VbeState $targetPid
+Write-Output "FINAL=$final"
+if ($final -eq "design" -or $final -eq "novbe") { Write-Output "reset" } else { Write-Output "stillbreak" }
+`;
+  const result = await runPowerShell(script, 45000);
+  const lines = (result.output || "").trim().split("\n");
+  return lines[lines.length - 1] || "";
+}
+
+const VBE_RESET_PS = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class VbeResetWin32 {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("oleacc.dll")] public static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint dwObjectID, ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
+  [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc callback, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+}
+"@
+function Attach-Excel([int]$procId) {
+  $script:foundHwnd = [IntPtr]::Zero
+  [VbeResetWin32]::EnumWindows({
+    param($h, $l)
+    if (-not [VbeResetWin32]::IsWindowVisible($h)) { return $true }
+    $p = [uint32]0; [void][VbeResetWin32]::GetWindowThreadProcessId($h, [ref]$p)
+    if ($p -ne $procId) { return $true }
+    $sb = New-Object System.Text.StringBuilder 256
+    [void][VbeResetWin32]::GetClassName($h, $sb, 256)
+    if ($sb.ToString() -eq "XLMAIN") { $script:foundHwnd = $h; return $false }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  $script:omHwnd = [IntPtr]::Zero
+  [VbeResetWin32]::EnumChildWindows($script:foundHwnd, {
+    param($h, $l)
+    $sb = New-Object System.Text.StringBuilder 256
+    [void][VbeResetWin32]::GetClassName($h, $sb, 256)
+    if ($sb.ToString() -eq "EXCEL7") { $script:omHwnd = $h; return $false }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  $t = if ($script:omHwnd -ne [IntPtr]::Zero) { $script:omHwnd } else { $script:foundHwnd }
+  $guid = [Guid]::Parse("00020400-0000-0000-C000-000000000046")
+  $obj = $null
+  $hr = [VbeResetWin32]::AccessibleObjectFromWindow($t, [UInt32]4294967280, [ref]$guid, [ref]$obj)
+  if ($hr -ne 0) { throw "attach fail" }
+  return $obj.Application
+}
+function Get-VbeTitle([int]$procId) {
+  $script:vt = ""
+  [VbeResetWin32]::EnumWindows({
+    param($h, $l)
+    if (-not [VbeResetWin32]::IsWindowVisible($h)) { return $true }
+    $p = [uint32]0; [void][VbeResetWin32]::GetWindowThreadProcessId($h, [ref]$p)
+    if ($p -ne $procId) { return $true }
+    $sb = New-Object System.Text.StringBuilder 512
+    [void][VbeResetWin32]::GetWindowText($h, $sb, 512)
+    $t = $sb.ToString()
+    if ($t -like "Microsoft Visual Basic*") { $script:vt = $t; return $false }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  return $script:vt
+}
+function Get-VbeState([int]$procId) {
+  $title = Get-VbeTitle $procId
+  if ($title -eq "") { return "novbe" }
+  if ($title -match '\[中断\]|\[break\]') { return "break" }
+  if ($title -match '\[正在运行\]|\[running\]') { return "running" }
+  return "design"
+}
+function Invoke-ResetConfirmClick([int]$procId) {
+  $script:confirmHwnd = [IntPtr]::Zero
+  [VbeResetWin32]::EnumWindows({
+    param($h, $l)
+    if (-not [VbeResetWin32]::IsWindowVisible($h)) { return $true }
+    $p = [uint32]0; [void][VbeResetWin32]::GetWindowThreadProcessId($h, [ref]$p)
+    if ($p -ne $procId) { return $true }
+    $cls = New-Object System.Text.StringBuilder 256
+    [void][VbeResetWin32]::GetClassName($h, $cls, 256)
+    if ($cls.ToString() -ne "#32770") { return $true }
+    $tb = New-Object System.Text.StringBuilder 512
+    [void][VbeResetWin32]::GetWindowText($h, $tb, 512)
+    if ($tb.ToString() -match '^Microsoft Visual Basic( for Applications)?$') {
+      $txb = New-Object System.Text.StringBuilder 1024
+      $script:dialogText = ""
+      [VbeResetWin32]::EnumChildWindows($h, {
+        param($c, $l2)
+        $ccb = New-Object System.Text.StringBuilder 256
+        [void][VbeResetWin32]::GetClassName($c, $ccb, 256)
+        if ($ccb.ToString() -eq "Static") {
+          $stb = New-Object System.Text.StringBuilder 1024
+          [void][VbeResetWin32]::GetWindowText($c, $stb, 1024)
+          $script:dialogText += $stb.ToString()
+        }
+        return $true
+      }, [IntPtr]::Zero) | Out-Null
+      if ($script:dialogText -match '重新设置工程|reset the project') { $script:confirmHwnd = $h; return $false }
+    }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  if ($script:confirmHwnd -eq [IntPtr]::Zero) { return $false }
+  $script:okBtn = [IntPtr]::Zero
+  [VbeResetWin32]::EnumChildWindows($script:confirmHwnd, {
+    param($c, $l2)
+    $ccb = New-Object System.Text.StringBuilder 256
+    [void][VbeResetWin32]::GetClassName($c, $ccb, 256)
+    if ($ccb.ToString() -eq "Button") {
+      $stb = New-Object System.Text.StringBuilder 256
+      [void][VbeResetWin32]::GetWindowText($c, $stb, 256)
+      $tn = $stb.ToString().Replace("&", "")
+      if ($tn -match '^确定$|^OK$|^是$|^Yes$') { $script:okBtn = $c; return $false }
+    }
+    return $true
+  }, [IntPtr]::Zero) | Out-Null
+  if ($script:okBtn -eq [IntPtr]::Zero) { return $false }
+  [void][VbeResetWin32]::SendMessage($script:okBtn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+  return $true
+}
+`;
+
+
 
 function enrichDialogInfo(dialog: MacroDialogInfo): MacroDialogInfo & {
   summary: string;
@@ -631,6 +749,32 @@ function enrichDialogInfo(dialog: MacroDialogInfo): MacroDialogInfo & {
     recommendedAction: recommended?.actionLabel || null,
     recommendedButtons: recommended?.buttons || [],
   };
+}
+
+/**
+ * 依据弹窗分类与交互策略解析自动处理动作。
+ * 错误弹窗始终自动处理；info/确认/InputBox 仅在 policy.mode === "auto" 时处理。
+ */
+function resolveAutoAction(
+  dialog: MacroDialogInfo,
+  policy?: MacroDialogPolicy
+): { buttons: string[]; actionLabel: string; terminal: boolean } | { fill: true } | null {
+  const kind = dialog.kind || classifyMacroDialog(dialog);
+  if (kind === "vb_runtime_error" || kind === "error") {
+    return pickDialogAction(dialog);
+  }
+  if (!policy || policy.mode !== "auto") return null;
+  // info/确认/InputBox 仅对真正的模态对话框自动处理，避免误点 VBE 主窗口等复杂界面
+  if (!["#32770", "bosa_sdm_XL9", "NUIDialog", "bosa_sdm_msword"].includes(dialog.className)) return null;
+  // InputBox：有输入框且提供了期望输入 → 填入并提交（优先于确认框处理）
+  if (dialog.hasEdit && policy.inputValue) return { fill: true };
+  if (kind === "info") {
+    return { buttons: ["确定", "OK", "继续", "Continue"], actionLabel: "确定", terminal: false };
+  }
+  if (kind === "confirmation") {
+    return resolveDialogAction(dialog, undefined, policy.confirmButton || "取消");
+  }
+  return null;
 }
 
 export async function listExcelDialogs(): Promise<ExcelComResult> {
@@ -723,8 +867,14 @@ public static class VbeFillWin32 {
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetForegroundWindow();
+
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
   public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, string lParam);
+
+  [DllImport("user32.dll", EntryPoint = "SendMessage")]
+  public static extern IntPtr SendMessageInt(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
   [DllImport("user32.dll")]
   public static extern bool SetFocus(IntPtr hWnd);
@@ -746,41 +896,58 @@ if (-not [VbeFillWin32]::IsWindowVisible($target)) {
   Write-Output (@{ success = $false; error = "弹窗不可见" } | ConvertTo-Json -Compress)
   exit 0
 }
-$edit = $null
+$script:edit = $null
 [VbeFillWin32]::EnumChildWindows($target, {
   param($child, $lp)
   if (-not [VbeFillWin32]::IsWindowVisible($child)) { return $true }
   $class = Get-ClassNameSafe $child
   if ($class -in @("Edit", "RichEdit20W", "RichEdit50W", "RICHEDIT50W", "msctls_hotkey32")) {
-    if ($null -eq $edit) { $edit = $child }
+    if ($null -eq $script:edit) { $script:edit = $child }
     return $false
   }
   return $true
 }, [IntPtr]::Zero) | Out-Null
-if ($null -eq $edit) {
+if ($null -eq $script:edit) {
   Write-Output (@{ success = $false; error = "未在弹窗中找到输入框控件" } | ConvertTo-Json -Compress)
   exit 0
 }
+# 统一改用 $script:edit 引用（脚本块委托内赋值不会传回本地作用域）
+$edit = $script:edit
 [void][VbeFillWin32]::SetForegroundWindow($target)
 Start-Sleep -Milliseconds 100
 [void][VbeFillWin32]::SetFocus($edit)
 # 先尝试直接设置文本
 $set = [VbeFillWin32]::SendMessage($edit, 0x000C, [IntPtr]::Zero, '${escapedText}')
 Start-Sleep -Milliseconds 100
-# 如果 WM_SETTEXT 失败或需要提交，再用 SendKeys
-if ($set -eq [IntPtr]::Zero -or ${submit ? "$true" : "$false"}) {
-  $wshell = New-Object -ComObject WScript.Shell
-  [void]$wshell.AppActivate((Get-WindowTextSafe $target))
-  $wshell.SendKeys('^a${escapedText}')
-  Start-Sleep -Milliseconds 100
+# 提交：优先对"确定/OK"按钮发 BM_CLICK（不依赖键盘焦点），失败再用 SendKeys
+$okBtn = $null
+[VbeFillWin32]::EnumChildWindows($target, {
+  param($child, $lp)
+  if (-not [VbeFillWin32]::IsWindowVisible($child)) { return $true }
+  if ((Get-ClassNameSafe $child) -ne "Button") { return $true }
+  $t = (Get-WindowTextSafe $child) -replace '&', ''
+  if ($t -like '*确定*' -or $t -like '*OK*') { $script:okBtn = $child; return $false }
+  return $true
+}, [IntPtr]::Zero) | Out-Null
+$clicked = $false
+if ($script:okBtn -ne $null) {
+  [void][VbeFillWin32]::SendMessageInt($script:okBtn, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero)
+  Start-Sleep -Milliseconds 250
+  $clicked = -not [VbeFillWin32]::IsWindowVisible($target)
 }
-if (${submit ? "$true" : "$false"}) {
-  $wshell = New-Object -ComObject WScript.Shell
-  $wshell.SendKeys('{ENTER}')
-  Start-Sleep -Milliseconds 200
+if (-not $clicked -and ${submit ? "$true" : "$false"}) {
+  # 键盘模拟仅当目标弹窗已经是前台窗口时才允许，绝不波及用户正在操作的其他窗口
+  $fg = [VbeFillWin32]::GetForegroundWindow()
+  if ($fg -eq $target) {
+    $wshell = New-Object -ComObject WScript.Shell
+    $wshell.SendKeys('^a${escapedText}')
+    Start-Sleep -Milliseconds 100
+    $wshell.SendKeys('{ENTER}')
+    Start-Sleep -Milliseconds 200
+  }
 }
 $actual = Get-WindowTextSafe $edit
-Write-Output (@{ success = $true; editText = $actual } | ConvertTo-Json -Compress)
+Write-Output (@{ success = $true; editText = $actual; clickedOk = $clicked } | ConvertTo-Json -Compress)
 `;
   const result = await runPowerShell(script);
   if (!result.success) {
@@ -804,7 +971,7 @@ Write-Output (@{ success = $true; editText = $actual } | ConvertTo-Json -Compres
 export async function runMacroWithDialogHandling(
   filePath: string,
   macroName: string,
-  options: { timeoutMs?: number; captureResultRange?: string; excelProcessId?: number } = {}
+  options: { timeoutMs?: number; captureResultRange?: string; excelProcessId?: number; dialogPolicy?: MacroDialogPolicy } = {}
 ): Promise<ExcelComResult> {
   const normalizedMacroName = macroName.trim();
   if (!normalizedMacroName) {
@@ -814,6 +981,8 @@ export async function runMacroWithDialogHandling(
   const wbName = basename(filePath);
   const preCheck = await ensureExcelRunning(wbName, options.excelProcessId);
   if (preCheck) return preCheck;
+
+  const dialogPolicy = options.dialogPolicy;
 
   const timeoutMs = options.timeoutMs ?? 45000;
   const statusPath = join(tmpdir(), `vba_macro_status_${randomBytes(8).toString("hex")}.json`);
@@ -872,8 +1041,26 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
           existing.recorded = true;
         }
 
-        const action = pickDialogAction(dialog);
+        const action = resolveAutoAction(dialog, dialogPolicy);
         if (!action) continue;
+
+        if ("fill" in action) {
+          // InputBox：填入期望输入并提交
+          const filled = await fillDialogInput(dialog.handle, dialogPolicy!.inputValue!, true);
+          if (!filled.success) continue;
+          dialog.autoHandled = true;
+          dialog.autoAction = `输入文本: ${dialogPolicy!.inputValue}`;
+          const fillIndex = collectedDialogs.findIndex((item) => buildDialogFingerprint(item) === fingerprint);
+          if (fillIndex >= 0) {
+            collectedDialogs[fillIndex] = { ...collectedDialogs[fillIndex], autoHandled: true, autoAction: dialog.autoAction };
+          } else {
+            collectedDialogs.push(dialog);
+            recordedFingerprints.add(fingerprint);
+          }
+          existing.handled = true;
+          continue;
+        }
+
         const handled = await invokeExcelDialogButton(dialog.handle, action.buttons);
         if (!handled) continue;
 

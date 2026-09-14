@@ -44,15 +44,29 @@ description: >
 
 ## 宏开发循环（改宏 → 跑宏 → 抓报错 → 读结果 → 再改）
 
-AI 修改 VBA 后测试宏，**必须走插件的宏运行桥**（能抓取报错弹窗全文、自动结束错误弹窗、Excel 不会被杀）：
+AI 修改 VBA 后测试宏，**必须走插件的宏运行桥**（能抓取报错/MsgBox/InputBox 弹窗全文、自动交互、Excel 不会被杀）。
+说明：官方 excel-cli 文档的 `vba run` 不处理任何弹窗——含 MsgBox/InputBox 的真实宏用它运行必然卡死，
+本插件的宏运行桥专为此设计，两者不重复：**桥=测试运行，CLI vba run=仅限已验证无弹窗的宏**。
 
 1. `vba update`（excelcli）写入/修改模块代码
 2. 用文件工具向**同步目录**写 `macro-run.json`（UTF-8）：
-   `{"macro": "Module1.YourProc", "timeoutMs": 30000}`
+   ```json
+   {
+     "macro": "Module1.YourProc",
+     "timeoutMs": 30000,
+     "dialogMode": "auto",
+     "confirmButton": "是",
+     "inputValue": "42"
+   }
+   ```
+   - `dialogMode`：`auto`（默认）自动处理全部弹窗；`errors` 仅自动结束报错弹窗
+   - `confirmButton`：宏内 `MsgBox vbYesNo` 确认框点哪个按钮（默认"取消"，可指定"是"）
+   - `inputValue`：宏内 `InputBox` 自动填入的文本
 3. 轮询读取同目录 `macro-run-result.json`（文件出现即为运行完成）：
    - `success=false` 时 `dialogs[]` 含报错弹窗的标题与**全文**（如"运行时错误 '11': 除数为零"、
      "编译错误: 子过程或函数未定义"），弹窗已被自动关闭，按报错内容修正代码
-   - `success=true` 也要检查 `dialogs[]`（宏内 MsgBox 等已记录）
+   - `success=true` 时 `dialogs[]` 记录宏触发的 MsgBox/InputBox 内容与自动操作
+     （如 MsgBox 文本"处理完成：10 行"已被点确定）——**用它验证宏的交互行为是否符合预期**
 4. `range get-values` 读取运行结果单元格，依据结果继续修改，重复 1-4
 
 注意事项：
@@ -60,7 +74,6 @@ AI 修改 VBA 后测试宏，**必须走插件的宏运行桥**（能抓取报�
 - **不要对可能有错的宏直接用 `excelcli vba run`**：VBA 错误弹窗会阻塞 daemon，超时后会话被销毁、
   Excel 进程退出且拿不到报错文本。确认无风险的宏（已通过桥接跑通）才可直接 `vba run`。
 - 若会话因历史操作失效：`session list` 检查 → `session open` 重新打开即可恢复。
-- 宏内的 `MsgBox`/`InputBox` 会阻塞运行：测试期请临时注释掉。
 - 所有错误弹窗的最近 20 条记录同时保存在同步目录 `excel-dialogs.json`，插件宿主也会弹出 VS Code 通知。
 
 ## 插件侧能力（AI 无需介入）
