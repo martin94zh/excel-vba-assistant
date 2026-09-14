@@ -1,9 +1,37 @@
+import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
 const MCP_SERVER_NAME = "excel-mcp";
 const TRACK_FILE = "mcp-workspaces.json";
 const APP_DIR = "excel-vba-assistant";
+
+/** 停止常驻的 excelcli daemon / 残留 Excel 进程，避免升级/重装时文件被锁导致安装卡住 */
+function stopDaemonProcesses(): void {
+  try {
+    // excelcli 自带的优雅停止（会连带关闭其派生的 Excel 进程）
+    const exeCandidates = [
+      path.join(__dirname, "excelcli.exe"),
+      path.join(__dirname, "..", "dist", "excelcli.exe"),
+    ];
+    for (const exe of exeCandidates) {
+      if (fs.existsSync(exe)) {
+        try {
+          execSync(`"${exe}" -q service stop`, { stdio: "pipe", timeout: 30000 });
+          console.log(`Stopped excelcli daemon via ${exe}`);
+          break;
+        } catch {}
+      }
+    }
+  } catch {}
+  try {
+    execSync(
+      'powershell -NoProfile -Command "Get-Process excelcli -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"',
+      { stdio: "pipe", timeout: 30000 }
+    );
+    console.log("Killed leftover excelcli processes");
+  } catch {}
+}
 
 function getTrackFilePath(): string {
   const base = process.env.APPDATA || process.env.USERPROFILE || process.env.HOME;
@@ -31,6 +59,7 @@ function removeMcpServerFromWorkspace(wsPath: string): void {
 }
 
 function main(): void {
+  stopDaemonProcesses();
   const trackFile = getTrackFilePath();
   if (!trackFile || !fs.existsSync(trackFile)) {
     console.log("No tracked workspaces to clean.");

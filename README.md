@@ -338,6 +338,16 @@ VBA 项目对象模型默认禁止程序访问，必须开启：
 
 ## 常见问题
 
+**Q：重装/升级 vsix 时一直转圈装不上？**
+
+多半是后台的 excelcli daemon 还在运行，锁着旧目录里的 exe。先结束它再装：
+
+```powershell
+taskkill /f /im excelcli.exe
+```
+
+或在任务管理器里结束 excelcli 进程，然后重新安装即可。
+
 **Q：安装插件后 AI 就能操作 Excel 吗？**
 可以，零配置。激活时 Skill 文档（含工具实际路径）自动同步到 `.trae/skills/`；选择 Excel 文件后 AI 即可操作。
 
