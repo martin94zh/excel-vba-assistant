@@ -452,17 +452,6 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
 
     <div class="switch-row">
       <div class="label-block">
-        <div class="title">自动执行 VBA</div>
-        <div class="desc">开启后，AI可自动执行测试</div>
-      </div>
-      <label class="switch">
-        <input type="checkbox" id="autoRunVba" ${autoRunVba ? "checked" : ""} onchange="send('toggleAutoRun', {value: this.checked})" />
-        <span class="slider"></span>
-      </label>
-    </div>
-
-    <div class="switch-row">
-      <div class="label-block">
         <div class="title">Excel 置顶</div>
         <div class="desc">保持Excel窗口始终在最前</div>
       </div>
@@ -511,10 +500,8 @@ export class ExcelVbaPanelProvider implements vscode.WebviewViewProvider {
         sd.title = s.syncDirectory || '';
         sd.classList.toggle('placeholder', !s.syncDirectory);
       }
-      const autoRun = document.getElementById('autoRunVba');
       const autoSync = document.getElementById('autoSync');
       const keepOnTop = document.getElementById('keepExcelOnTop');
-      if (autoRun) autoRun.checked = !!s.autoRunVba;
       if (autoSync) autoSync.checked = !!s.autoSync;
       if (keepOnTop) keepOnTop.checked = !!s.keepExcelOnTop;
 

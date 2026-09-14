@@ -9,7 +9,7 @@
 
 你选择 Excel 文件，插件把它**前台可见地打开**；AI 通过命令行工具对同一个 Excel 增删改查（数据、表格、图表、透视表、Power Query、DAX、VBA……），你全程看得到每一步；插件同步引擎让 **VBA 代码在 Excel 与编辑器之间双向实时同步**——你在 Excel 里手改宏，编辑器里立刻出现；AI 改宏、跑宏、报错弹窗自动抓取，形成完整的 AI 宏开发闭环。
 
-> 当前版本：**v0.9.3** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
+> 当前版本：**v0.9.4** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
 
 ---
 
@@ -48,6 +48,8 @@
 | 📌 | **Excel 置顶** | 一键保持 Excel 窗口在最前，边写代码边看运行结果 |
 | 📚 | **Skills 自动注入** | 内置 AI 使用文档（含官方 31 组命令手册），激活时自动同步到工作区并注入实际工具路径，AI 零配置上手 |
 | 🔒 | **单持有者架构** | 工作簿只被一个后台服务持有，插件、AI、你三方协作互不冲突（[为什么这样设计](#架构决策为什么用-cli-而不是-mcp-server)） |
+| ⚡ | **打开即引导** | 打开有进度提示（daemon 预热提速）；打开后引导设置同步目录并自动完成首次导出 |
+| 🛟 | **异常自恢复** | 检测到 Excel 被手工关闭时，自动释放残留会话与文件占用并复位状态（不会出现"文件被占用"打不开的死局） |
 
 ---
 
@@ -84,7 +86,7 @@
 
 **方式 A：下载安装包（推荐）**
 
-1. 下载 [excel-vba-assistant-0.9.3.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.3/excel-vba-assistant-0.9.3.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
+1. 下载 [excel-vba-assistant-0.9.4.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.4/excel-vba-assistant-0.9.4.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
 2. Trae / VS Code 中按 `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → 选择文件
 3. 重新加载窗口
 
@@ -94,7 +96,7 @@
 git clone https://github.com/martin94zh/excel-vba-assistant.git
 cd excel-vba-assistant
 npm install
-npm run package    # 生成 excel-vba-assistant-0.9.3.vsix
+npm run package    # 生成 excel-vba-assistant-0.9.4.vsix
 ```
 
 ### 六步上手
@@ -117,6 +119,8 @@ npm run package    # 生成 excel-vba-assistant-0.9.3.vsix
 ### 1. 选择 Excel 文件
 
 支持 `.xlsm` / `.xlsb` / `.xlam`。控制面板「选择文件」按钮或命令面板 `Excel VBA: 选择 Excel 文件`。
+
+打开过程有**进度提示**（"正在启动 Excel 后台服务并打开工作簿…"），且插件激活时已预热后台服务，首次打开更快。
 
 选择时插件自动检测文件状态：
 
@@ -160,6 +164,7 @@ syncDirectory/
 - 本地文件保存 → 300ms 防抖 → 自动写回 VBE
 - VBE 代码变更 → 每 3 秒 checksum 检测 → 自动导出到本地
 - 变更进入队列按序处理，避免双向互相覆盖
+- **开启自动同步或连接成功时**：若同步目录为空，自动执行一次 VBE → 本地 导出，无需再手动点"同步至目录"
 - 内容比对**区分大小写**，未变化的文件不触发反向同步
 
 > 建议配合编辑器自动保存使用（`files.autoSave: "afterDelay"`，延迟 500ms），停止输入约 1 秒即可完成同步。担心误改可保持关闭，使用手动同步。
@@ -260,11 +265,7 @@ AI 拿到报错全文 → 修正代码 → 重新运行 → `range get-values` �
 2. QuickPick 列出所有 `模块.过程名`，选择执行
 3. 同样具备弹窗检测与自动处理能力，日志输出到输出通道
 
-**自动执行 VBA**（可选）：开启后，AI 修改代码并同步后会自动提示运行指定宏（仍需确认）：
-
-```json
-{ "excelVba.autoRunVba": true, "excelVba.autoRunMacroName": "Module1.Main" }
-```
+> 旧版的「自动执行 VBA」开关已移除：新架构下 AI 通过宏运行桥直接测试宏（含报错抓取），不再需要该中转开关。对应设置项 `excelVba.autoRunVba` 仅保留兼容，不再生效于面板。
 
 ### 6. Excel 置顶
 
@@ -277,7 +278,7 @@ AI 拿到报错全文 → 修正代码 → 重新运行 → `range get-values` �
 - 通过 excelcli 保存并关闭工作簿（`session close --save`，COM 兜底强制结束）
 - 取消置顶、从工作区移除同步目录、删除自动创建的目录
 
-> 插件不会感知 Excel 被外部直接关闭。关闭 Excel 或切换工作簿前，请先点「断开 Excel」。会话若已失效，重新选择文件即可恢复。
+> **忘记点断开直接关了 Excel？** 插件会自动检测：数秒内释放后台残留会话与文件占用（避免"文件被占用"无法重新打开），并把状态复位。重新选择文件即可再次开始。当然，正常流程仍建议先点「断开 Excel」。
 
 ---
 
@@ -312,7 +313,7 @@ AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基�
 | 路径 | 选择文件 / 断开 Excel | 打开与断开（断开=保存关闭+清理） |
 | 路径 | 选择目录 / Excel相同目录 | 设置同步目录（后者自动在 Excel 同目录建同名文件夹） |
 | 同步操作 | 同步至目录 / 写回Excel | VBE → 本地 / 本地 → VBE（写回需确认） |
-| 配置选项 | 自动同步 / 自动执行 VBA / Excel 置顶 | 三个开关 |
+| 配置选项 | 自动同步 / Excel 置顶 | 两个开关 |
 
 **命令面板**（`Ctrl+Shift+P` 搜 "Excel VBA"）：
 

@@ -19,6 +19,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { VbaClient } from "./vbaClient";
 import type { MacroDialogPolicy } from "./vbaMacroRunner";
+import { findExcelPidForWorkbook } from "../native/processUtils";
 
 export interface MacroRunRequest {
   macro: string;
@@ -63,8 +64,12 @@ export interface MacroBridgeOptions {
   getClient: () => VbaClient | null;
   /** 返回当前同步目录；未设置时返回 null（桥接文件无处安放，轮询空转） */
   getSyncDir: () => string | null;
-  /** 返回当前工作簿路径（用于超时后的运行状态检测） */
+  /** 返回当前工作簿路径（用于超时后的运行状态检测与消失检测） */
   getWorkbookPath?: () => string | null;
+  /** 工作簿是否处于已连接/同步状态（消失检测仅在该状态下生效，等待打开阶段不触发） */
+  isConnected?: () => boolean;
+  /** 工作簿持有者消失（用户手工关闭 Excel 等）后的恢复回调：释放残留会话、复位状态 */
+  onWorkbookVanished?: () => void | Promise<void>;
   intervalMs?: number;
   log?: (message: string) => void;
   /** 检测到新的错误弹窗时回调（VS Code 宿主中显示警告通知） */
@@ -272,7 +277,32 @@ if ($script:vt -match '\\[中断\\]|\\[break\\]|\\[正在运行\\]|\\[running\\]
     }
   }
 
+  let pidMissCount = 0;
   async function tick(): Promise<void> {
+    // 工作簿持有者消失检测（用户手工关闭 Excel 等）：连续 2 次找不到持有者 PID → 触发恢复。
+    // 仅在已连接状态下生效；等待打开阶段 PID 缺失属正常。
+    if (options.onWorkbookVanished && options.isConnected?.()) {
+      const wb = options.getWorkbookPath?.();
+      if (wb) {
+        let missing = false;
+        try {
+          missing = !(await findExcelPidForWorkbook(wb));
+        } catch {
+          missing = false;
+        }
+        if (missing) {
+          pidMissCount++;
+          if (pidMissCount >= 2) {
+            pidMissCount = 0;
+            log("检测到 Excel 已被关闭且工作簿持有者消失，触发恢复");
+            await options.onWorkbookVanished();
+            return;
+          }
+        } else {
+          pidMissCount = 0;
+        }
+      }
+    }
     if (busy) return;
     const client = options.getClient();
     if (!client) return;

@@ -91,7 +91,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(output, statusBar);
 
   // 宏运行桥 + Excel 弹窗监视：AI 写 macro-run.json 即可用带弹窗捕获的 COM 路径跑宏；
-  // 任何错误弹窗（如 AI 直接 vba run 触发）都会被抓取文本、自动结束并记录到 excel-dialogs.json
+  // 任何错误弹窗（如 AI 直接 vba run 触发）都会被抓取文本、自动结束并记录到 excel-dialogs.json；
+  // 同时监控工作簿持有者：用户手工关闭 Excel 时自动释放残留会话与文件占用
   macroBridge = startMacroBridge({
     getClient: () => {
       const wb = stateManager.get("workbookPath");
@@ -100,12 +101,22 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     getSyncDir: () => stateManager.get("syncDirectory") || null,
     getWorkbookPath: () => stateManager.get("workbookPath") || null,
+    isConnected: () => ["connected", "syncing", "synced"].includes(stateManager.getAll().serviceStatus),
+    onWorkbookVanished: () => handleWorkbookVanished(),
     log: (m) => output.info(m),
     notify: (m) => {
       void vscode.window.showWarningMessage(m);
     },
   });
   context.subscriptions.push({ dispose: () => macroBridge?.stop() });
+
+  // 预热 excelcli daemon（后台服务冷启动 1-2 秒），让首次"选择文件"即秒开
+  const prewarmCli = findLocalExcelCli(path.join(extensionContext.extensionPath, "dist"));
+  if (prewarmCli) {
+    void runExcelCli(prewarmCli, ["service", "start"], 45000)
+      .then((r) => output.info(r.success ? "excelcli daemon 已预热就绪" : `excelcli daemon 预热未就绪：${r.error ?? "未知状态"}`))
+      .catch(() => {});
+  }
 
   // 清理旧版本（v0.8.x MCP 架构）遗留的 .trae/mcp.json：
   // 残留的 excel-mcp 服务器会让 AI 优先尝试互斥的 MCP 通道（报 already open / 抢占文件），
@@ -135,10 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // 激活时只做两件事：恢复连接状态、按需启动自动同步。
   void restoreExcelConnectionStatus();
 
-  if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
-    startFileWatcher();
-    startVbeToLocalWatcher();
-  }
+  syncWatchersRefresh();
 
   // 将内置 Skill 同步到当前工作区的 .trae/skills，使 Trae AI 能按需加载
   void syncBuiltinSkillsToWorkspace();
@@ -209,6 +217,8 @@ async function attachAndConnect(workbookPath: string, knownPid?: number): Promis
   stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
   lastExcelAvailable = true;
   output.info(`恢复连接状态：Excel 已连接${pid ? `（PID ${pid}）` : ""}`);
+  syncWatchersRefresh();
+  await initialVbeExportIfNeeded();
   pushStateToWebview();
   return true;
 }
@@ -241,18 +251,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   register("excelVba.syncVbeToLocal", () => void executeSync("vbe-to-local"));
   register("excelVba.syncLocalToVbe", () => void executeSync("local-to-vbe"));
 
-  register("excelVba.toggleAutoSync", async () => {
-    const next = !stateManager.get("autoSync");
-    await stateManager.set("autoSync", next);
-    if (next) {
-      startFileWatcher();
-      startVbeToLocalWatcher();
-    } else {
-      stopFileWatcher();
-      stopVbeToLocalWatcher();
-    }
-    output.info(`自动同步已${next ? "开启" : "关闭"}`);
-  });
+  register("excelVba.toggleAutoSync", () => void applyAutoSync(!stateManager.get("autoSync")));
 
   register("excelVba.toggleAutoRunVba", async () => {
     const next = !stateManager.get("autoRunVba");
@@ -293,15 +292,7 @@ async function handleWebviewMessage(msg: WebviewMessage): Promise<void> {
       output.info(`自动执行 VBA 已${msg.value ? "开启" : "关闭"}`);
       break;
     case "toggleAutoSync":
-      await stateManager.set("autoSync", msg.value);
-      if (msg.value) {
-        startFileWatcher();
-        startVbeToLocalWatcher();
-      } else {
-        stopFileWatcher();
-        stopVbeToLocalWatcher();
-      }
-      output.info(`自动同步已${msg.value ? "开启" : "关闭"}`);
+      await applyAutoSync(msg.value);
       break;
     case "toggleKeepExcelOnTop":
       await stateManager.set("keepExcelOnTop", msg.value);
@@ -382,10 +373,8 @@ async function handleSelectWorkbook(): Promise<void> {
       await stateManager.set("excelProcessId", conflictingOwnerPid);
       stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
       lastExcelAvailable = true;
-      if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
-        startFileWatcher();
-        startVbeToLocalWatcher();
-      }
+      syncWatchersRefresh();
+      await initialVbeExportIfNeeded();
       pushStateToWebview();
       return;
     }
@@ -445,7 +434,19 @@ async function handleSelectWorkbook(): Promise<void> {
   pushStateToWebview();
 
   output.info(`正在通过 excelcli 打开工作簿（前台可见）：${filePath}`);
-  const opened = await runExcelCli(cliPath, ["-q", "session", "open", filePath, "--show"], 120000);
+  const opened = await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Excel VBA Assistant",
+      cancellable: false,
+    },
+    async (progress) => {
+      progress.report({ message: "正在启动 Excel 后台服务并打开工作簿（首次约 3-5 秒）…" });
+      const r = await runExcelCli(cliPath, ["-q", "session", "open", filePath, "--show"], 120000);
+      progress.report({ message: "正在附着同步引擎…" });
+      return r;
+    }
+  );
   if (!opened.success) {
     const msg = opened.error || "excelcli 打开工作簿失败";
     output.error(`excelcli 打开工作簿失败：${msg}`);
@@ -471,9 +472,18 @@ async function handleSelectWorkbook(): Promise<void> {
 
   stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
   lastExcelAvailable = true;
-  if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
-    startFileWatcher();
-    startVbeToLocalWatcher();
+  syncWatchersRefresh();
+  await initialVbeExportIfNeeded();
+
+  if (!stateManager.get("syncDirectory")) {
+    const dirChoice = await vscode.window.showInformationMessage(
+      "Excel 已打开（前台可见）。设置同步目录后即可进行 VBA 双向同步。",
+      "使用 Excel 相同目录（推荐）",
+      "选择其他目录",
+      "暂不"
+    );
+    if (dirChoice === "使用 Excel 相同目录（推荐）") await handleUseExcelSameDirectory();
+    else if (dirChoice === "选择其他目录") await handleSelectSyncDirectory();
   }
 
   vscode.window.showInformationMessage(
@@ -653,6 +663,46 @@ async function handleDisconnectExcel(): Promise<void> {
   vscode.window.showInformationMessage("已断开与 Excel 的连接");
 }
 
+/**
+ * 工作簿持有者消失（用户手工关闭 Excel 等）后的自动恢复：
+ * daemon 会话可能仍持有僵尸 Excel 进程并锁定文件，必须显式关闭会话释放占用，
+ * 并把僵死的"同步中"状态复位，否则用户重新打开文件会提示"被占用"。
+ */
+async function handleWorkbookVanished(): Promise<void> {
+  output.warn("检测到 Excel 已被关闭，开始释放残留会话与文件占用");
+  stopFileWatcher();
+  stopVbeToLocalWatcher();
+
+  const cliPath = getExcelCliPath();
+  const sid = stateManager.get("cliSessionId");
+  if (cliPath && sid) {
+    const r = await runExcelCli(cliPath, ["-q", "session", "close", "--session", sid, "--save"], 60000).catch(() => null);
+    if (r && r.success) {
+      output.info("残留 daemon 会话已关闭并保存");
+    } else {
+      // 关闭失败说明文件可能仍被占用：稍候重试一次
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await runExcelCli(cliPath, ["-q", "session", "close", "--session", sid, "--save"], 60000).catch(() => {});
+    }
+  }
+
+  await stateManager.set("excelProcessId", 0);
+  await stateManager.set("cliSessionId", "");
+  pendingChanges = [];
+  lastVbeChecksum = "";
+  lastExcelAvailable = false;
+  isSyncing = false;
+  stateManager.setRuntime({
+    serviceStatus: "disconnected",
+    isSyncing: false,
+    lastError: undefined,
+  });
+  pushStateToWebview();
+  vscode.window.showWarningMessage(
+    "检测到 Excel 已被关闭：已自动释放文件占用并复位状态。重新在插件中选择文件即可再次开始。"
+  );
+}
+
 // ============================================================
 // 等待工作簿被打开（open-waiter）
 // ============================================================
@@ -694,10 +744,8 @@ async function checkWorkbookOpened(filePath: string): Promise<void> {
     stateManager.setRuntime({ serviceStatus: "connected", lastError: undefined });
     lastExcelAvailable = true;
     output.info(`检测到工作簿已打开（PID ${pid}），Excel 已连接`);
-    if (stateManager.get("autoSync") && stateManager.get("syncDirectory")) {
-      startFileWatcher();
-      startVbeToLocalWatcher();
-    }
+    syncWatchersRefresh();
+    await initialVbeExportIfNeeded();
     pushStateToWebview();
     return;
   }
@@ -738,10 +786,7 @@ async function setSyncDirectory(newDir: string, autoCreated: boolean): Promise<v
   viewProvider.refresh();
   pushStateToWebview();
 
-  if (stateManager.get("autoSync")) {
-    stopFileWatcher();
-    startFileWatcher();
-  }
+  syncWatchersRefresh();
 
   // 在资源管理器中打开同步目录
   await openSyncDirInWorkspace(newDir);
@@ -1085,6 +1130,44 @@ async function handleRefreshResources(): Promise<void> {
 // 自动同步：文件监听
 // ============================================================
 
+/** 按当前状态统一启停双向同步监听（开关切换/目录变化/连接成功后调用） */
+function syncWatchersRefresh(): void {
+  const on = stateManager.get("autoSync") && !!stateManager.get("syncDirectory") && !!stateManager.get("workbookPath");
+  if (on) {
+    startFileWatcher();
+    startVbeToLocalWatcher();
+  } else {
+    stopFileWatcher();
+    stopVbeToLocalWatcher();
+  }
+}
+
+/** 自动同步刚启用/刚连接时的初始导出：同步目录为空（无 workbook.json）时先做一次 VBE → 本地 */
+async function initialVbeExportIfNeeded(): Promise<void> {
+  const syncDir = stateManager.get("syncDirectory");
+  const wb = stateManager.get("workbookPath");
+  if (!syncDir || !wb) return;
+  if (!["connected", "syncing", "synced"].includes(stateManager.getAll().serviceStatus)) return;
+  if (isSyncing) return;
+  if (fs.existsSync(path.join(syncDir, "workbook.json"))) {
+    // 本地已有副本：只刷新 checksum 基线，不覆盖本地可能未同步的编辑
+    await captureVbeChecksum();
+    return;
+  }
+  output.info("自动同步：同步目录为空，先执行一次 VBE → 本地 导出");
+  await syncVbeToLocalQuiet(true);
+}
+
+/** 自动同步开关的统一处理（命令面板与 Webview 共用） */
+async function applyAutoSync(next: boolean): Promise<void> {
+  await stateManager.set("autoSync", next);
+  syncWatchersRefresh();
+  if (next) {
+    await initialVbeExportIfNeeded();
+  }
+  output.info(`自动同步已${next ? "开启" : "关闭"}`);
+}
+
 function startFileWatcher(): void {
   stopFileWatcher();
   const syncDir = stateManager.get("syncDirectory");
@@ -1134,13 +1217,6 @@ async function syncLocalToVbeQuiet(skipQueue = false): Promise<void> {
   if (!client) return;
   const syncDir = stateManager.get("syncDirectory");
   if (!syncDir) return;
-
-  // 如果当前没有活动编辑器或文件不在同步目录，跳过（避免误触发）
-  const activeEditor = vscode.window.activeTextEditor;
-  if (activeEditor) {
-    const docPath = activeEditor.document.uri.fsPath;
-    if (!docPath.startsWith(syncDir)) return;
-  }
 
   isSyncing = true;
   stateManager.setRuntime({ isSyncing: true, serviceStatus: "syncing" });
