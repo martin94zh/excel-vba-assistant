@@ -1434,5 +1434,81 @@ try {
 `;
     return runPowerShell(script);
   }
+
+  /**
+   * 按预设分屏排列 Excel 主窗口（Win32 SetWindowPos，全程不抢前台焦点）。
+   *
+   * 不用 excelcli 的 `window arrange`：该命令需要把 Excel 窗口带到前台，
+   * 在 2.2.0 上受 Windows 前台锁限制会确定性失败（后台 daemon 无前台权限）。
+   * 本实现只移动/调整大小（NOACTIVATE | NOZORDER），无需前台即可生效。
+   */
+  async setWindowArrange(preset: "left-half" | "right-half" | "top-half" | "bottom-half" | "center" | "full-screen"): Promise<ExcelComResult> {
+    const script = `
+$ErrorActionPreference = "Stop"
+try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type @"
+    using System;
+    using System.Runtime.InteropServices;
+    using System.Text;
+    public class Win32Arrange1 {
+        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool EnumWindows(EnumWindowsProc c, IntPtr l);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool IsWindowVisible(IntPtr h);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
+        [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    }
+"@
+    $SW_RESTORE = 9; $SW_MAXIMIZE = 3
+    $NOACTIVATE = 0x0010; $NOZORDER = 0x0004
+    $targetPid = ${this.excelProcessId || 0}
+    if ($targetPid -le 0) { throw "未记录 Excel 进程 PID" }
+    $preset = ${JSON.stringify(preset)}
+    $script:xlmain = [IntPtr]::Zero
+    [Win32Arrange1]::EnumWindows({
+        param($h, $l)
+        if (-not [Win32Arrange1]::IsWindowVisible($h)) { return $true }
+        $p = [uint32]0; [void][Win32Arrange1]::GetWindowThreadProcessId($h, [ref]$p)
+        if ($p -ne $targetPid) { return $true }
+        $cls = New-Object System.Text.StringBuilder 256
+        [void][Win32Arrange1]::GetClassName($h, $cls, 256)
+        if ($cls.ToString() -eq "XLMAIN") { $script:xlmain = $h; return $false }
+        return $true
+    }, [IntPtr]::Zero) | Out-Null
+    if ($script:xlmain -eq [IntPtr]::Zero) { throw "未找到 Excel 主窗口" }
+    if ($preset -eq "full-screen") {
+        [void][Win32Arrange1]::ShowWindow($script:xlmain, $SW_MAXIMIZE)
+        Start-Sleep -Milliseconds 300
+        Write-Output "Excel 窗口已最大化（full-screen）"
+        return
+    }
+    # 先还原窗口状态，否则对最大化窗口 SetWindowPos 不生效
+    [void][Win32Arrange1]::ShowWindow($script:xlmain, $SW_RESTORE)
+    Start-Sleep -Milliseconds 250
+    $wa = [System.Windows.Forms.Screen]::FromHandle($script:xlmain).WorkingArea
+    $x = $wa.Left; $y = $wa.Top; $w = $wa.Width; $h = $wa.Height
+    switch ($preset) {
+        "left-half"   { $w = [int]($wa.Width / 2) }
+        "right-half"  { $x = $wa.Left + [int]($wa.Width / 2); $w = $wa.Width - [int]($wa.Width / 2) }
+        "top-half"    { $h = [int]($wa.Height / 2) }
+        "bottom-half" { $y = $wa.Top + [int]($wa.Height / 2); $h = $wa.Height - [int]($wa.Height / 2) }
+        "center"      { $w = [int]($wa.Width * 0.7); $h = [int]($wa.Height * 0.7)
+                        $x = $wa.Left + [int](($wa.Width - $w) / 2); $y = $wa.Top + [int](($wa.Height - $h) / 2) }
+        default { throw "未知分屏预设：$preset" }
+    }
+    [void][Win32Arrange1]::SetWindowPos($script:xlmain, [IntPtr]::Zero, $x, $y, $w, $h, $NOACTIVATE -bor $NOZORDER)
+    Start-Sleep -Milliseconds 300
+    $r = New-Object Win32Arrange1+RECT
+    [void][Win32Arrange1]::GetWindowRect($script:xlmain, [ref]$r)
+    Write-Output ("Excel 窗口已按 {0} 排列：({1},{2}) {3}x{4}" -f $preset, $r.Left, $r.Top, ($r.Right - $r.Left), ($r.Bottom - $r.Top))
+} catch { Write-Error ($_ | Out-String) }
+`;
+    return runPowerShell(script);
+  }
 }
 

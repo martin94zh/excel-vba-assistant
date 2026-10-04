@@ -1,12 +1,17 @@
 # Excel CLI References
 
-This folder contains the generated command/action/flag reference plus shared Excel domain guidance for the CLI.
+本目录是 excel-cli Skill 的参考文档，供 AI 按需加载。内容分两层：
 
-**Note for developers:** Run `dotnet build src\ExcelMcp.CLI\ExcelMcp.CLI.csproj -c Release` to generate SKILL.md. Run `scripts\Build-AgentSkills.ps1 -PopulateReferences` to regenerate `cli-commands.md` from the built CLI help output and adapt `skills\shared\*.md` for the CLI package.
+- **叙事指南**（本目录下的 .md）：Excel 领域的工作流、约束、易错点与各功能领域指南，
+  取自官方文档站 [excelmcpserver.dev/reference](https://excelmcpserver.dev/reference/)
+  （ExcelMcp 2.2.0，MIT License，抓取于 2026-10-05；各文件头部有来源注释）。
+  上游 2.2.0 起不再随包发布这些文档，统一维护在官网。
+- **命令参考**（[commands/](commands/) 目录）：30 个命令组的动作与参数表，
+  由脚本直接从插件内置 `excelcli.exe`（2.2.0）的 `--help` 输出生成，
+  与实际二进制严格一致。`service` / `batch` / `session` / `diag` 四个基础命令
+  的文档经人工核对无变化，保留原版。
 
-**Note for users:** The exact CLI syntax comes from `cli-commands.md`. Shared domain guides may use MCP-style calls as conceptual shorthand; translate them according to the syntax notice at the top of each file.
+命令组索引见 [cli-commands.md](cli-commands.md)（含 Common Pitfalls）。
 
-## Contents
-
-- `cli-commands.md` - Auto-generated command groups, actions, parameters, and common pitfalls
-- Shared domain guides - Excel workflows, gotchas, charts, screenshots, Power Query, Data Model, ranges, and other feature guidance
+> **注意**：遇到任何命令报"Unknown action/option"，以 `excelcli <命令组> --help`
+> 的实时输出为准——文档可能滞后于内置 CLI 的版本。

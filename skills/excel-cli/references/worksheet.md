@@ -1,99 +1,74 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/worksheet/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# worksheet - Worksheet Operations
+# Worksheet Operations
 
-## Same-File Session Operations
+Inspect existing names, contents, and dependencies before creating, moving,
+or removing sheets. Deleting a worksheet removes all its contents and can
+break references. There is no tool-level undo.
 
-Use session-based actions for worksheet lifecycle within the same workbook:
+Use CLI help or MCP tool descriptions for current worksheet controls and inputs.
 
-| Action | Parameters |
-|--------|------------|
-| `create` | `sheet_name` |
-| `rename` | `old_name`, `new_name` |
-| `delete` | `sheet_name` |
-| `move` | `sheet_name`, `before_sheet`/`after_sheet` |
-| `copy` | `source_name`, `target_name` |
+The server checks Microsoft's documented naming rules before creating, copying,
+or renaming a worksheet: names cannot be blank, exceed 31 characters, contain
+`/ \ ? * : [ ]`, begin or end with an apostrophe, or be `History`.
+Non-English names and apostrophes inside a name are allowed. See Microsoft's
+[worksheet naming guidance](https://support.microsoft.com/en-us/excel/rename-a-worksheet).
+Names are not trimmed: leading or trailing spaces may be part of a name, but a
+name made entirely of whitespace is rejected as blank.
+The server checks these documented constraints before changing the workbook;
+Excel also validates the name when it is assigned. If Excel rejects a name
+after a create or copy has added the sheet, the error identifies that sheet.
+It remains in the workbook for the caller to inspect and remove if appropriate.
 
-**Rename example:**
-```
-action: rename
-old_name: Sheet1
-new_name: Summary
-```
+## Cross-file operations
 
-Rename requires `old_name` + `new_name`.
+Use the user's intended source and destination files. Cross-file transfer owns
+opening, saving, and closing those files; do not apply it to workbooks already
+open in unrelated sessions.
 
-## Atomic Cross-File Operations
+Copying keeps the source sheet. Moving removes it and saves both workbooks.
+Closing another session without saving cannot reverse a saved transfer.
+Failures do not promise rollback across files: inspect both before retrying.
 
-**copy-to-file** and **move-to-file** are the simplest way to transfer sheets between files.
+## Styling and outlines
 
-| Action | Description | Key Parameters |
-|--------|-------------|----------------|
-| `copy-to-file` | Copy sheet to another file | `source_file`, `source_sheet`, `target_file` |
-| `move-to-file` | Move sheet to another file | `source_file`, `source_sheet`, `target_file` |
+Worksheet presentation includes tab colors, visibility, legacy notes, images,
+shapes, page layout, and outlines. Legacy notes are different from modern
+threaded comments.
 
-**Benefits:**
-- No session management required
-- Files are opened, modified, saved, and closed automatically
-- Single atomic operation - no cleanup needed
+Page setup prepares output but does not print or open preview. Decide whether
+fixed scaling or fitting to pages serves the report; printer support and
+scaling affect automatic pagination. Manual-break replacement affects the
+whole sheet, including breaks outside the current print area.
 
-**Example - Copy sheet to another file:**
-```
-action: copy-to-file
-source_file: C:\Reports\Q1.xlsx
-source_sheet: Summary
-target_file: C:\Reports\Annual.xlsx
-target_sheet_name: Q1 Summary  # Optional: rename during copy
-```
+Inspect the print area, repeated headers, margins, and page breaks before
+[PDF/XPS export](/reference/workbook/#save-and-publish). Native settings can partly change
+before failure, so read back the result rather than assuming rollback.
 
-**Example - Move sheet to another file:**
-```
-action: move-to-file
-source_file: C:\Drafts\Data.xlsx
-source_sheet: FinalData
-target_file: C:\Published\Report.xlsx
-before_sheet: Sheet1  # Optional: position in target
-```
+Outline changes affect complete rows or columns. Inspect existing groups and
+summary positions first. Removing one grouping level is different from clearing
+all outlines; expand/collapse when only the visible detail level should change.
 
-## Positioning Parameters
+## Protection permissions
 
-Use `before_sheet` OR `after_sheet` (not both) to control where the sheet appears in the target file:
+Changing worksheet protection replaces its permission configuration; omitted
+permissions need not preserve the previous choices. Inspect the full current
+state before replacing it.
 
-- `before_sheet: "Sheet1"` - Insert before Sheet1
-- `after_sheet: "Sheet1"` - Insert after Sheet1
-- Neither specified - Append to end
+Filtering permission allows changes to an existing filter, not necessarily
+creating a new one. Sorting and deletion can still require unlocked cells.
+Automation-only protection is runtime-only and is not retained after reopening.
 
-## When to Use Session-Based Operations
+Worksheet protection and hidden formulas control editing or display, not
+encryption or confidentiality. Do not bypass security or promise that a failed
+change restored the previous state.
 
-For same-file operations (copy within same workbook, rename, delete, tab colors, visibility, protection, legacy cell notes, images, shapes, and page setup), use session-based actions with `session_id`. The worksheet-style `set-comment`, `get-comment`, and `clear-comment` actions operate on legacy notes, not threaded comments.
+## Workbook themes
 
-## Row and Column Outlines
+A theme change can affect colors and fonts throughout the workbook, including
+styles and charts. Fixed RGB colors remain fixed. Choose an existing Office
+theme file for the requested appearance rather than making unrelated changes.
 
-Use `worksheet_style` for grouping and outline controls:
-
-| Action | Purpose | Key Parameters |
-|--------|---------|----------------|
-| `group` | Group complete rows or columns | `sheet_name`, `range_address`, `axis` (`Rows`/`Columns`) |
-| `ungroup` | Remove one grouping level | `sheet_name`, `range_address`, `axis` |
-| `get-outline-info` | Read outline level, hidden state, and settings | `sheet_name`, `range_address`, `axis` |
-| `set-outline-settings` | Configure summary positions and automatic styles | `summary_row`, `summary_column`, `automatic_styles` |
-| `show-outline-levels` | Expand/collapse to selected levels | `row_levels`, `column_levels` |
-| `clear-outline` | Remove all row and column groups | `sheet_name` |
-
-Use row ranges such as `2:10` with `axis: Rows` and column ranges such as `B:F` with `axis: Columns`. Summary rows accept `above` or `below`; summary columns accept `left` or `right`.
-
-## Rename Parameters
-
-For `rename`, use `old_name` and `new_name`.
-
-- MCP rename requires `old_name` + `new_name`
-- CLI uses `--old-name` + `--new-name`
-- Copy and cross-file parameters such as `sheet_name`, `source_name`, `source_sheet`, `target_name`, and `target_sheet_name` are not rename aliases
-
-## Common Errors
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Source and target files must be different" | Same file for both | Use `copy` action instead |
-| "Source file not found" | File doesn't exist | Verify file path |
-| "Sheet not found" | Typo in sheet name | Use `list` action to see available sheets |
+Inspect the actual theme definitions. Empty script-font definitions do not mean
+fallback fonts were applied, and Excel cannot expose every theme name or original
+file path. Read back changes before retrying after failure; saving remains explicit.

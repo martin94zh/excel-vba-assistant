@@ -1,238 +1,106 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/datamodel/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# datamodel - Server Quirks
+# Data Model & DAX
 
-**PREREQUISITE: Tables must be added to Data Model first!**
+Worksheet Tables and Data Model tables are separate. Add an existing Excel Table
+to the model, or load a Power Query to `data-model`/`both`, before creating
+relationships or measures. Use model table listings to discover exact names.
+Current commands and inputs come from CLI help or MCP tool descriptions.
 
-The Data Model (Power Pivot) only contains tables that were explicitly added.
-You CANNOT create DAX measures on tables that aren't in the Data Model.
+## Creating a measure
 
-## MSOLAP Prerequisite (for evaluate/execute-dmv)
+The following assumes an existing worksheet Table named `Sales` with an `Amount`
+column and a captured session. Check each result before continuing.
 
-**The `evaluate` and `execute-dmv` actions require Microsoft Analysis Services OLE DB Provider (MSOLAP).**
-
-If you see "Class not registered" (0x80040154) error, install one of:
-1. **Power BI Desktop** (recommended - includes MSOLAP): https://powerbi.microsoft.com/desktop
-2. **Microsoft OLE DB Driver for Analysis Services**: https://learn.microsoft.com/analysis-services/client-libraries
-3. **SQL Server Analysis Services client tools**
-
-After installation, restart Excel and try again.
-
-## CRITICAL: Data Model Sync (Worksheet Tables)
-
-**Worksheet tables and Data Model tables are SEPARATE copies!**
-
-When you append/modify a worksheet table, the Data Model does NOT auto-update.
-You MUST explicitly refresh the Data Model to sync changes.
-
-```
-# WRONG: Data still shows old values
-table(append, table_name="Sales", rows=[[...]])  # Worksheet updated
-datamodel(evaluate, dax_query="...")             # Returns OLD values!
-
-# CORRECT: Refresh Data Model after worksheet changes
-table(append, table_name="Sales", rows=[[...]])  # Worksheet updated
-datamodel(refresh)                                 # Sync to Data Model
-datamodel(evaluate, dax_query="...")             # Returns NEW values!
+```mcp
+table(action: 'add-to-data-model', session_id: sessionId, table_name: 'Sales')
+datamodel(action: 'create-measure', session_id: sessionId, table_name: 'Sales', measure_name: 'Total Sales', dax_formula: 'SUM(Sales[Amount])')
+datamodel(action: 'evaluate', session_id: sessionId, dax_query: 'EVALUATE ROW("Total", [Total Sales])')
 ```
 
-**When refresh is automatic:**
-- `powerquery(refresh)` refreshes BOTH Power Query AND Data Model
-- Tables loaded via Power Query auto-sync on Power Query refresh
-
-**When refresh is REQUIRED:**
-- After `table(append)` to worksheet table
-- After `range(set-values)` that modifies table data
-- After any manual/direct worksheet edits
-
-## Excel Power Pivot Limitations (vs SSAS/Power BI)
-
-| Feature | Power BI/SSAS | Excel Power Pivot | Workaround |
-|---------|---------------|-------------------|------------|
-| Calculated Tables | DAX: `MyTable = FILTER(...)` | NOT SUPPORTED | Use Power Query to create the table |
-| Calculated Columns | DAX: `Table[Col] = ...` | Read-only names/types; no COM formula or mutation API | Use Power Query or DAX measures |
-| Measures | Full support | Full support | - |
-| Relationships | Full support | Full support | - |
-
-**Key Insight**: `ModelTableColumn` exposes only `Name`, `DataType`, and `Parent` in Excel's PIA. `list-columns` and `read-table` return both the raw `XlParameterDataType` value and its readable name. Excel's COM API cannot read a calculated-column formula or create, modify, or delete calculated columns. If you need computed columns:
-1. **Preferred**: Add the column in Power Query (computed at refresh time)
-2. **Alternative**: Use a DAX measure instead (computed at query time)
-
-**How to add tables to the Data Model**:
-
-| Source | Method |
-|--------|--------|
-| Worksheet Excel Table | table with add-to-data-model action |
-| External file (CSV, etc.) | powerquery with `load_destination='data-model'` |
-| Database/web source | powerquery with `load_destination='data-model'` |
-
-**DAX Formatting**:
-
-DAX formulas are preserved exactly by default on WRITE operations (create-measure, update-measure), subject to Excel locale separator translation. Set `format_dax=true` only with explicit user consent; it sends DAX to daxformatter.com. Remote formatting adds ~100-500ms network latency per write operation. If formatting fails (network issues, API errors), the original DAX is saved unchanged - operations never fail due to formatting.
-
-**Action disambiguation**:
-
-- list-tables: List all tables currently in the Data Model
-- list-measures: List all DAX measures (returns raw DAX from Excel)
-- create-measure: Create a new DAX measure (DAX preserved by default; `format_dax=true` opts into remote formatting). `format_type` accepts General, Currency, Decimal, Percentage, or WholeNumber case-insensitively; omission or an empty value defaults to General.
-- update-measure: Modify an existing measure's formula, format, or description (DAX preserved by default; `format_dax=true` opts into remote formatting). The same `format_type` values are accepted; omission or an empty value keeps the existing format.
-- delete-measure: Remove a measure
-- delete-table: Remove table AND ALL its measures (DESTRUCTIVE!)
-- read-info: Get Data Model metadata (culture, compatibility level)
-- read-connection: Get the embedded model connection name/type, ModelConnection command metadata, and connected table names
-- read-table: Get table columns and source connection metadata
-- refresh: Refresh all Data Model data from sources
-- **evaluate**: Execute DAX EVALUATE queries and return tabular results (read-only, no side effects)
-- **execute-dmv**: Execute DMV queries for metadata discovery (SELECT * FROM $SYSTEM.*)
-
-**evaluate action**:
-
-Execute any DAX EVALUATE query against the Data Model and return results as JSON.
-Useful for ad-hoc analysis, testing DAX expressions, or extracting aggregated data.
-
-```dax
-// Examples of valid EVALUATE queries:
-EVALUATE 'SalesTable'                    // Return entire table
-EVALUATE TOPN(10, 'Sales', 'Sales'[Amount], DESC)  // Top 10 by amount
-EVALUATE SUMMARIZE('Sales', 'Sales'[Region], "Total", SUM('Sales'[Amount]))  // Aggregation
-EVALUATE FILTER('Products', 'Products'[Category] = "Electronics")  // Filtered
-EVALUATE ROW("TotalRevenue", SUM('Sales'[Amount]))  // Single row result
+```cli
+excelcli -q table add-to-data-model --session $sessionId --table-name Sales
+excelcli -q datamodel create-measure --session $sessionId --table-name Sales --measure-name 'Total Sales' --dax-formula 'SUM(Sales[Amount])'
+excelcli -q datamodel evaluate --session $sessionId --dax-query 'EVALUATE ROW("Total", [Total Sales])'
 ```
 
-**execute-dmv action** (DMV = Dynamic Management Views):
+Measure names are unique across the model, not just their home table. Update
+an existing measure rather than trying to create it again. Choose its display
+format from the result's meaning; percentages and decimals are not interchangeable.
+Read back the actual definition and result, especially after failure, because
+a write can leave partial changes.
 
-Execute SQL-like DMV queries to discover Data Model metadata.
-DMVs are schema rowsets that expose Analysis Services internal information.
+Supply native DAX with comma argument separators and decimal points. Remote
+formatting is optional, sends code to an external service, and requires consent.
 
-SYNTAX: `SELECT * FROM $SYSTEM.<SchemaRowset>`
+When Windows uses a comma as the decimal mark, Excel misreads a comma that
+touches a number in a measure formula, for example turning `IF(..., 1.5, 0)`
+into an invalid formula or `DATEADD(..., -1, MONTH)` into `-1.`. Create and
+update then add one space on each side of such commas (`IF(..., 1.5 , 0)`,
+`DATEADD(..., -1 , MONTH)`). Text, quoted names, column references, and comments
+are left alone. The DAX meaning is unchanged, and the result `message` says
+spaces were added. Do not change regional settings or enable remote formatting
+as a workaround. Measure readback returns the DAX that
+the model stores, with decimal points, including after the workbook is reopened.
 
-IMPORTANT LIMITATIONS (Excel's embedded Analysis Services):
-- ONLY `SELECT *` works - specific column selection (SELECT col1, col2) fails
-- Some TMSCHEMA views return empty results despite Data Model having data
-- Excel's embedded AS has limited support compared to full SQL Server Analysis Services
+No machine or Excel regional settings are changed.
+Measure writes store a definition; Excel may defer validation of an unknown
+function until evaluation. A successful write is not proof of a successful
+calculation. Evaluate the measure in the intended context and inspect its value.
 
-**Working DMV queries (verified in Excel):**
+## Refresh is not calculation
 
-| DMV Query | Returns |
-|-----------|---------|
-| `SELECT * FROM $SYSTEM.TMSCHEMA_MEASURES` | All DAX measures with formulas |
-| `SELECT * FROM $SYSTEM.TMSCHEMA_RELATIONSHIPS` | All relationships between tables |
-| `SELECT * FROM $SYSTEM.DISCOVER_CALC_DEPENDENCY` | Calculation dependencies (useful for impact analysis) |
-| `SELECT * FROM $SYSTEM.DBSCHEMA_CATALOGS` | Database/catalog metadata |
-| `SELECT * FROM $SYSTEM.DISCOVER_SCHEMA_ROWSETS` | List all available DMVs |
+After worksheet Table edits or appends, refresh the model before querying it.
+Power Query refresh updates its model load. Refresh dependent PivotTables after
+their source is current.
 
-**DMV queries that execute but may return empty in Excel:**
+DAX measures are evaluated at query time in the current filter context; they do
+not reload source data. A changed external rate/lookup table still needs a source
+refresh. Put stored transformations and computed columns in Power Query; use
+measures for calculations over current model data.
 
-| DMV Query | Notes |
-|-----------|-------|
-| `SELECT * FROM $SYSTEM.TMSCHEMA_TABLES` | May return 0 rows in Excel's embedded AS |
-| `SELECT * FROM $SYSTEM.TMSCHEMA_COLUMNS` | May return 0 rows in Excel's embedded AS |
-| `SELECT * FROM $SYSTEM.TMSCHEMA_PARTITIONS` | May return 0 rows in Excel's embedded AS |
+Refresh and querying have different completion limits; use their current help
+rather than applying one blanket timeout to every operation. Excel exposes
+no reliable live model-refresh status or per-table refresh timestamp here.
+Refresh failures preserve Excel's error details rather than assuming that
+model-level refresh is unsupported. Check the reported source or engine error
+before choosing recovery; refreshing individual tables is not a universal fix.
 
-**Full list of TMSCHEMA DMVs** (from MS-SSAS-T protocol):
+Model metadata reads fail when a required property cannot be read. A reported
+row count of zero means Excel returned zero, not that its property getter failed.
 
-| Category | DMVs |
-|----------|------|
-| Model Structure | TMSCHEMA_MODEL, TMSCHEMA_TABLES, TMSCHEMA_COLUMNS, TMSCHEMA_HIERARCHIES, TMSCHEMA_LEVELS |
-| Measures/KPIs | TMSCHEMA_MEASURES, TMSCHEMA_KPIS, TMSCHEMA_FORMAT_STRING_DEFINITIONS |
-| Relationships | TMSCHEMA_RELATIONSHIPS |
-| Security | TMSCHEMA_ROLES, TMSCHEMA_ROLE_MEMBERSHIPS, TMSCHEMA_TABLE_PERMISSIONS, TMSCHEMA_COLUMN_PERMISSIONS |
-| Partitions | TMSCHEMA_PARTITIONS, TMSCHEMA_DATA_SOURCES |
-| Metadata | TMSCHEMA_ANNOTATIONS, TMSCHEMA_EXTENDED_PROPERTIES, TMSCHEMA_CULTURES, TMSCHEMA_OBJECT_TRANSLATIONS |
-| Perspectives | TMSCHEMA_PERSPECTIVES, TMSCHEMA_PERSPECTIVE_TABLES, TMSCHEMA_PERSPECTIVE_COLUMNS, TMSCHEMA_PERSPECTIVE_MEASURES |
-| Calculations | TMSCHEMA_CALCULATION_GROUPS, TMSCHEMA_CALCULATION_ITEMS, TMSCHEMA_EXPRESSIONS |
+## Relationships and unsupported features
 
-**DISCOVER DMVs** (server/analysis metadata):
+Relationships connect the detail/many side to the unique lookup/one side with
+compatible column types. Only one relationship per table pair can be active;
+use DAX `USERELATIONSHIP` for an inactive one. List relationships before changing
+or deleting model tables. Deleting a model table also removes its measures and
+relationships.
 
-| DMV | Description |
-|-----|-------------|
-| DISCOVER_CALC_DEPENDENCY | Dependencies between objects (great for impact analysis) |
-| DISCOVER_SCHEMA_ROWSETS | List all available schema rowsets |
-| DISCOVER_PROPERTIES | Server properties |
-| DISCOVER_KEYWORDS | Reserved keywords |
-| DISCOVER_LITERALS | Supported literals |
+Excel Power Pivot does not expose DAX calculated-table creation through these
+tools. Its COM column API exposes names and types, not calculated-column formula
+reading or mutation. Use Power Query computed columns or measures instead.
 
-**Example use cases:**
+## Querying and displaying results
 
-```sql
--- Find all measures and their DAX formulas
-SELECT * FROM $SYSTEM.TMSCHEMA_MEASURES
+DAX queries return analytical results; DMV queries inspect model metadata.
+Both require the Microsoft Analysis Services
+OLE DB provider (MSOLAP). If it is missing, report the prerequisite; see
+[Microsoft's client libraries](https://learn.microsoft.com/analysis-services/client-libraries).
+Do not diagnose every Excel error as missing MSOLAP.
+Date columns returned by `evaluate` may appear as Excel date-serial numbers,
+not formatted date strings. Check the returned values and types before using
+them as display-ready dates.
 
--- Discover what objects a measure depends on
-SELECT * FROM $SYSTEM.DISCOVER_CALC_DEPENDENCY
+Use [DMV guidance](/reference/dmv-reference/) for supported rowsets and Excel limitations.
+Some rowsets return no rows even when a model exists.
 
--- List all relationships
-SELECT * FROM $SYSTEM.TMSCHEMA_RELATIONSHIPS
+| Desired result | Approach |
+|----------------|----------|
+| Query results in a worksheet | DAX-backed worksheet Table |
+| Query results returned to the caller | DAX query evaluation |
+| Interactive grouping and filtering | Model-backed PivotTable |
+| Chart linked to PivotTable fields | Verified live PivotChart |
 
--- Get catalog information
-SELECT * FROM $SYSTEM.DBSCHEMA_CATALOGS
-```
-
-Reference: [Microsoft DMV Documentation](https://learn.microsoft.com/en-us/analysis-services/instances/use-dynamic-management-views-dmvs-to-monitor-analysis-services)
-
-**DAX measure creation**:
-
-- `table_name`: Which table the measure belongs to (for organization)
-- `measure_name`: Display name for the measure
-- `dax_formula`: DAX expression (e.g., "SUM(Sales[Revenue])")
-- `format_type`: Optional named format: General, Currency, Decimal, Percentage, or WholeNumber (case-insensitive). Unknown values are rejected.
-
-**Common DAX patterns**:
-
-```dax
-// Sum
-SUM(TableName[ColumnName])
-
-// Average
-AVERAGE(TableName[ColumnName])
-
-// Count rows
-COUNTROWS(TableName)
-
-// Calculated ratio
-DIVIDE(SUM(Sales[Revenue]), SUM(Sales[Units]), 0)
-```
-
-## Displaying Data Model Data - Choose the Right Output
-
-| Goal | Best Tool | Why |
-|------|-----------|-----|
-| **Flat query results** | `table create-from-dax` | Clean tabular display, no PivotTable UI |
-| **Static reports/snapshots** | `table create-from-dax` | DAX does aggregation, table just displays |
-| **Data for formulas** | `table create-from-dax` | Use structured references like `=SUM(Sales[Amount])` |
-| **Interactive drill-down** | `pivottable` | User can regroup, filter, expand/collapse |
-| **Cross-tabulation (rows × columns)** | `pivottable` | Matrix layout with row/column fields |
-
-**Rule**: Prefer `table create-from-dax` for displaying query results.
-Use `pivottable` only when the user needs interactive analysis capabilities.
-
-## Charting Data Model Data - Use PivotChart Directly
-
-**WRONG**: Create a regular chart from the PivotTable's displayed cell range
-**RIGHT**: Use `chart create-from-pivottable` to create and verify a live PivotChart
-
-The action links the PivotChart to the existing PivotTable, so field changes and
-refreshes update the chart. It fails rather than returning a static chart when
-Excel cannot establish that link.
-
-## Star Schema Architecture
-
-**Why use DAX over Power Query for calculations?**
-
-- DAX recalculates on refresh without re-running Power Query
-- Useful when lookup/rate tables change frequently
-
-**Common mistakes**:
-
-- Creating measures before adding source table to Data Model → Error
-- Using worksheet table names instead of Data Model table names
-- Forgetting that delete-table removes ALL measures on that table
-- Not specifying `table_name` when creating measures (required for organization)
-
-**Server-specific quirks**:
-
-- 2-minute auto-timeout on Data Model operations
-- Table names in Data Model may differ from worksheet (check list-tables)
-- Refresh is synchronous and can target the whole model or one table; Excel exposes no live model/table `Refreshing` status through COM
-- `ModelTable.LastRefresh` is missing from the Excel PIA and unavailable at runtime in supported Excel builds, so no reliable model-table refresh timestamp can be reported
-- Measure names must be unique across entire Data Model (not per-table)
+For per-row revenue, use `SUMX(Sales, Sales[Quantity]*Sales[UnitPrice])`, not a
+product of column totals. Use `DIVIDE` when a denominator may be zero.

@@ -5,7 +5,7 @@ description: >
   and VBE sync work together. The user picks a workbook in the plugin; the plugin
   opens it VISIBLE via `excelcli session open --show` (daemon-owned session);
   the AI then operates the SAME session with excelcli commands (ranges, tables,
-  pivots, charts, Power Query, DAX, VBA, screenshots — 31 command groups / 326
+  pivots, charts, Power Query, DAX, VBA, screenshots — 31 command groups / 387
   operations), and the plugin keeps VBE code bidirectionally synced with local
   files. Use for ANY Excel task in this workspace.
   Triggers: Excel, spreadsheet, workbook, xlsm, VBA, macro, excelcli, session.
@@ -13,7 +13,7 @@ description: >
 
 # Excel VBA Assistant — 插件编排说明
 
-本插件 = **excelcli（31 组命令 / 326 操作）+ VBE 双向同步（COM）+ 前台可视化**。
+本插件 = **excelcli（31 组命令 / 387 操作）+ VBE 双向同步（COM）+ 前台可视化**。
 
 ## 核心模型（必读）
 
@@ -40,7 +40,7 @@ description: >
    （插件打开的会话通常由插件断开时保存，一般无需你关闭）
 ```
 
-完整命令参考：[../excel-cli/SKILL.md](../excel-cli/SKILL.md)（31 组命令与 326 操作的官方文档）。
+完整命令参考：[../excel-cli/SKILL.md](../excel-cli/SKILL.md)（31 组命令与 387 操作的官方文档）。
 
 ## 宏开发循环（改宏 → 跑宏 → 抓报错 → 读结果 → 再改）
 

@@ -1,92 +1,57 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/slicer/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# slicer - Server Quirks
+# Slicers
 
-**Slicer Types**:
+A PivotTable slicer filters its connected PivotTables. A Table slicer filters
+one worksheet Table, not a separate PivotTable cache. A dashboard control does
+not automatically filter every chart.
 
-Two distinct slicer types exist:
-- **PivotTable Slicers**: Filter PivotTables (can control multiple PivotTables)
-- **Table Slicers**: Filter Excel Tables (single table only)
+Current commands and inputs come from CLI help or MCP tool descriptions.
 
-**Actions**:
+## Plan the control {#required-creation-inputs}
 
-| Action | Description | Required Parameters |
-|--------|-------------|---------------------|
-| `create-slicer` | Create PivotTable slicer | pivot_table_name, field_name |
-| `list-slicers` | List all PivotTable slicers | (none) |
-| `set-slicer-selection` | Set PivotTable slicer filter | slicer_name, selected_items |
-| `delete-slicer` | Delete PivotTable slicer | slicer_name |
-| `create-table-slicer` | Create Table slicer | table_name, column_name |
-| `list-table-slicers` | List all Table slicers | (none) |
-| `set-table-slicer-selection` | Set Table slicer filter | slicer_name, selected_items |
-| `delete-table-slicer` | Delete Table slicer | slicer_name |
+Inspect source fields, existing control names, and the destination sheet before
+creating a control. Choose its location as part of the requested layout rather
+than assuming Excel will select a suitable name or position.
 
-**CRITICAL: Required Parameters** - The "Required Parameters" column above is strict. Missing any required parameter will cause an error. Pay special attention to `pivot_table_name` for PivotTable slicers and `slicer_name` for selection/deletion operations.
+Use a date timeline for a PivotTable date field, not an ordinary Table column.
+A live PivotChart follows the connected PivotTable; a regular chart may not.
 
-**Naming Convention**:
+Creation and selection results, and listed slicers, identify the source with
+`sourceType` (`"PivotTable"` or `"Table"`). Returned `position` is Excel's
+actual `Shape.TopLeftCell`, not an echo of the requested position. Excel rounds
+shape coordinates, so a shape aligned with a cell boundary can report the
+preceding cell. Verify placement using the native coordinates as well as the
+reported anchor when testing exact positioning.
 
-- If `slicer_name` is not provided, the tool auto-generates `{FieldName}Slicer` or `{ColumnName}Slicer`
-- Slicer names must be unique within workbook
-- Use `list-slicers` or `list-table-slicers` to check existing names
+## Selection and verification
 
-**Selection Behavior**:
+Choose whether to replace the existing selection or add to it. Use actual
+returned items instead of guessing labels. Data Model captions can be ambiguous;
+use the discovered unique item name when needed. Adding to an unfiltered model
+slicer keeps it unfiltered, allowing new members after refresh.
 
-- `selected_items` is a list of strings: `["Value1", "Value2"]`
-- Empty list `[]` clears all filters (shows all items)
-- Values must match exactly (case-sensitive)
-- Invalid values are silently ignored
+For regular and Table slicers, the resulting selection can differ from the
+request when items do not match or Excel will not deselect every item. Read both
+the selected items and the filtered rows or PivotTable results. Check combined
+filters together.
 
-**CLI: JSON Array Quoting** (important for `--selected-items`):
+Removing a slicer is not the same as clearing its filter. Clear the filter
+first when that is the intended outcome, then inspect the resulting data.
 
-The `--selected-items` parameter requires a JSON array. Use proper shell escaping:
+See [PivotTable guidance](/reference/pivottable/) for source refresh and field setup.
 
-```powershell
-# PowerShell: use single quotes around the JSON, double quotes inside
---selected-items '["West","East"]'
+## Timelines, shared connections, and layout
 
-# Or escape inner quotes with backtick
---selected-items "[`"West`",`"East`"]"
+A timeline filters an inclusive calendar-date range on every connected
+PivotTable. It uses date selection, not ordinary item selection. Clearing its
+date filter does not clear unrelated filters.
 
-# Clear filter (show all items)
---selected-items '[]'
-```
+Shared controls can connect to PivotTables using the same existing compatible
+cache. Matching field names alone are not enough; connections do not rebuild
+incompatible caches. Table slicers cannot connect to PivotTables, and a
+PivotTable control must keep at least one source connection.
 
-**Positioning**:
-
-- `destination_sheet` specifies which worksheet hosts the slicer
-- `position` is a cell address for top-left corner (e.g., `'E1'`, `'G5'`)
-- The slicer's top-left corner aligns to the specified cell
-- Default position if not specified: Excel chooses
-
-**Common Mistakes**:
-
-- Creating slicer for field not in PivotTable → Error
-- Creating table slicer for column not in table → Error
-- Setting selection with wrong case → Values ignored (filter shows nothing)
-- Deleting slicer that doesn't exist → Error
-
-**Best Practices**:
-
-1. Call `list-slicers` before creating to avoid name conflicts
-2. Use `list-slicers` to get exact slicer names for selection/deletion
-3. Multi-PivotTable filtering: Create one slicer, connect to multiple PivotTables in Excel UI
-
-**CLI Usage**:
-
-```powershell
-# Create PivotTable slicer
-excelcli slicer create-slicer --session <id> --pivot-table-name "SalesPivot" --field-name "Region" --destination-sheet "Dashboard"
-
-# Set slicer filter
-excelcli slicer set-slicer-selection --session <id> --slicer-name "RegionSlicer" --selected-items "[`"West`",`"East`"]"
-
-# Clear slicer filter (show all)
-excelcli slicer set-slicer-selection --session <id> --slicer-name "RegionSlicer" --selected-items "[]"
-
-# Create Table slicer
-excelcli slicer create-table-slicer --session <id> --table-name "SalesTable" --column-name "Category"
-
-# List all slicers
-excelcli slicer list-slicers --session <id>
-excelcli slicer list-table-slicers --session <id>
-```
+Inspect actual connections before promising a shared dashboard filter.
+After a layout/style change, read the control's resulting appearance and bounds
+instead of assuming that every requested setting was accepted by Excel.

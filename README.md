@@ -5,7 +5,7 @@
 ![Excel](https://img.shields.io/badge/Excel-2016%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
-**在 Trae / VS Code 中让 AI 直接操作真实的 Excel：前台可见、326 种操作、VBA 双向同步、AI 宏测试闭环。**
+**在 Trae / VS Code 中让 AI 直接操作真实的 Excel：前台可见、387 种操作、VBA 双向同步、AI 宏测试闭环。**
 
 你选择 Excel 文件，插件把它**前台可见地打开**；AI 通过命令行工具对同一个 Excel 增删改查（数据、表格、图表、透视表、Power Query、DAX、VBA……），你全程看得到每一步；插件同步引擎让 **VBA 代码在 Excel 与编辑器之间双向实时同步**——你在 Excel 里手改宏，编辑器里立刻出现；AI 改宏、跑宏、报错弹窗自动抓取，形成完整的 AI 宏开发闭环。
 
@@ -26,7 +26,7 @@
   - [宏运行（控制面板）](#5-宏运行控制面板)
   - [Excel 置顶](#6-excel-置顶)
   - [断开与清理](#7-断开与清理)
-- [完整能力清单（326 操作）](#完整能力清单326-操作)
+- [完整能力清单（387 操作）](#完整能力清单387-操作)
 - [控制面板与命令参考](#控制面板与命令参考)
 - [环境要求与安全设置](#环境要求与安全设置)
 - [常见问题](#常见问题)
@@ -42,7 +42,7 @@
 | | 功能 | 说明 |
 |---|---|---|
 | 🖥️ | **前台可见** | Excel 真实打开在桌面上，AI 的每一步写入、格式化、画图你实时看得见（不是黑盒后台操作） |
-| 🤖 | **AI 全量操作** | 内置 [ExcelMcp 2.0.8](https://github.com/sbroenne/mcp-server-excel) CLI：**31 组命令、326 操作**，覆盖 VBA、工作表、单元格、格式、表格、透视表、图表、Power Query、DAX、切片器、截图、窗口管理 |
+| 🤖 | **AI 全量操作** | 内置 [ExcelMcp 2.2.0](https://github.com/sbroenne/mcp-server-excel) CLI：**31 组命令、387 操作**，覆盖 VBA、工作表、单元格、格式、表格、透视表、图表、Power Query、DAX、切片器、截图、窗口管理 |
 | 🔄 | **VBE ↔ 本地双向同步** | Excel 里手改宏 → 编辑器自动出现；编辑器里改代码 → 写回 Excel。支持自动（3 秒轮询 + 300ms 防抖）与手动两种模式，带删除同步与队列防冲突 |
 | 🧪 | **AI 宏测试闭环** | AI 改完宏自动运行：**报错弹窗全文抓取**（运行时错误/编译错误）、**MsgBox/InputBox/确认框自动应答**、运行结果自动读取——AI 根据报错和结果自主修正，全程不卡死、不抢你的键盘 |
 | 📌 | **Excel 置顶** | 一键保持 Excel 窗口在最前，边写代码边看运行结果 |
@@ -72,8 +72,8 @@
 
 **三个角色，一个持有者：**
 
-1. **excelcli daemon**（来自开源项目 [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel) 2.0.8）：后台常驻服务，**独占持有工作簿**。所有 `excelcli` 进程都连接到它，会话跨进程持久——这是插件与 AI 能协作同一工作簿的关键。
-2. **AI**：在你的 Trae / VS Code 对话框里提需求，AI 执行 `excelcli` 命令操作 daemon 里的同一会话——326 种操作随便用。
+1. **excelcli daemon**（来自开源项目 [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel) 2.2.0）：后台常驻服务，**独占持有工作簿**。所有 `excelcli` 进程都连接到它，会话跨进程持久——这是插件与 AI 能协作同一工作簿的关键。
+2. **AI**：在你的 Trae / VS Code 对话框里提需求，AI 执行 `excelcli` 命令操作 daemon 里的同一会话——387 种操作随便用。
 3. **插件**：选择文件时让 daemon 前台可见地打开 Excel；随后通过 **COM 附着**同一个 Excel 实例，提供 AI 做不到的事——VBE 双向同步、带弹窗处理的宏运行桥、窗口置顶。
 
 > 完整的决策依据见[架构决策](#架构决策为什么用-cli-而不是-mcp-server)：为什么不使用 MCP Server 形态。
@@ -174,7 +174,7 @@ syncDirectory/
 **零配置**：插件激活时自动把两组 Skill 文档同步到工作区 `.trae/skills/`，并注入 excelcli 的实际路径——AI 打开对话即可工作：
 
 - **excel-vba-assistant**：插件编排说明（会话模型、宏开发循环、同步边界）
-- **excel-cli**：官方 31 组命令 / 326 操作完整手册（含工作流、反模式、批量模式）
+- **excel-cli**：31 组命令 / 387 操作参考手册（30 个命令组文档已按 ExcelMcp 2.2.0 实测重新生成，含 2.2.0 破坏性变更警示）+ 官方报表排版附加技能
 
 AI 的典型操作（都作用在**你眼前的同一个 Excel** 上）：
 
@@ -282,7 +282,7 @@ AI 拿到报错全文 → 修正代码 → 重新运行 → `range get-values` �
 
 ---
 
-## 完整能力清单（326 操作）
+## 完整能力清单（387 操作）
 
 AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基础命令）：
 
@@ -317,7 +317,9 @@ AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基�
 
 **命令面板**（`Ctrl+Shift+P` 搜 "Excel VBA"）：
 
-`选择 Excel 文件`、`选择本地同步目录`、`使用当前工作区作为同步目录`、`使用 Excel 相同目录`、`断开 Excel`、`VBE → 本地 同步`、`本地 → VBE 同步`、`切换自动同步`、`切换自动执行 VBA`、`运行宏`、`刷新资源`、`打开输出日志`、`同步 Skill 到工作区`、`复制 excelcli 路径与常用命令`
+`选择 Excel 文件`、`选择本地同步目录`、`使用当前工作区作为同步目录`、`使用 Excel 相同目录`、`断开 Excel`、`VBE → 本地 同步`、`本地 → VBE 同步`、`切换自动同步`、`切换自动执行 VBA`、`运行宏`、`排列 Excel 窗口（分屏）`、`刷新资源`、`打开输出日志`、`同步 Skill 到工作区`、`复制 excelcli 路径与常用命令`
+
+> 宏运行与同步期间，Excel 状态栏会显示实时进度（如"正在运行宏 Module1.Main..."），完成后自动恢复；`排列 Excel 窗口（分屏）` 可把 Excel 摆到左/右半屏或全屏，边看边等 AI 干活。
 
 ---
 
@@ -430,7 +432,7 @@ node build/e2e-bridge.js <workbook> <syncDir>
 
 ## 致谢
 
-- [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel) — 本插件全部 Excel 自动化能力的来源（ExcelMcp 2.0.8 CLI，31 组命令 / 326 操作），以及官方 excel-cli Skill 文档
+- [sbroenne/mcp-server-excel](https://github.com/sbroenne/mcp-server-excel) — 本插件全部 Excel 自动化能力的来源（ExcelMcp 2.2.0 CLI，31 组命令 / 387 操作），以及官方 excel-cli Skill 文档
 - 上游采用 MIT 许可证，本项目同样以 [MIT](LICENSE) 开源
 
 ---

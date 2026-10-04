@@ -13,7 +13,7 @@
  * - 用户在插件中选择文件 → 插件执行 `excelcli session open <file> --show`，
  *   Excel 前台可见，会话归 daemon 所有；
  * - AI（Trae/VS Code）用任意新起的 excelcli 进程携带 --session <id> 即可操作
- *   同一工作簿（31 组命令 / 326 操作，含 range/vba/powerquery/datamodel 等）；
+ *   同一工作簿（31 组命令 / 387 操作，含 range/vba/powerquery/datamodel 等）；
  * - 插件通过 COM 附着同一 Excel 实例完成 VBE 双向同步、宏运行（含弹窗处理）
  *   与窗口置顶。
  * （不使用 MCP server：stdio 模式下每个 MCP 客户端各自持有进程内服务，
@@ -33,6 +33,11 @@ import { sleep } from "./runtime/powershell";
 import { VbaClient } from "./client/vbaClient";
 import { startMacroBridge } from "./client/macroBridge";
 import { findLocalExcelCli, runExcelCli } from "./native/cliRunner";
+import {
+  clearExcelStatusText,
+  setExcelStatusText,
+  WINDOW_PRESETS,
+} from "./native/excelWindow";
 import {
   findExcelPidForWorkbook,
   waitForProcessExit,
@@ -263,6 +268,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
   });
 
   register("excelVba.runMacro", () => void handleRunMacro());
+  register("excelVba.arrangeWindow", () => void handleArrangeWindow());
   register("excelVba.openOutput", () => output.show(false));
   register("excelVba.refreshResources", () => void handleRefreshResources());
   register("excelVba.syncSkills", () => void syncBuiltinSkillsToWorkspace(true));
@@ -943,6 +949,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
   isSyncing = true;
   stateManager.setRuntime({ isSyncing: true, serviceStatus: "syncing" });
   output.info(`开始同步：${direction === "vbe-to-local" ? "VBE → 本地" : "本地 → VBE"}`);
+  void showExcelProgress(`Excel VBA: 正在同步（${direction === "vbe-to-local" ? "VBE → 本地" : "本地 → VBE"}）...`);
 
   try {
     const result = direction === "vbe-to-local"
@@ -987,6 +994,7 @@ async function executeSync(direction: "vbe-to-local" | "local-to-vbe"): Promise<
     output.error(`同步异常：${msg}`);
     vscode.window.showErrorMessage(`同步失败：${msg}`);
   } finally {
+    void clearExcelProgress();
     isSyncing = false;
     stateManager.setRuntime({ isSyncing: false });
   }
@@ -1053,16 +1061,21 @@ async function tryAutoRunMacro(): Promise<void> {
   );
   if (confirm !== "运行") return;
 
-  // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
-  const result = await client.runMacro(macroName);
-  if (result.success) {
-    output.info(`宏 ${macroName} 执行成功`);
-    if (result.message) output.log(result.message);
-    vscode.window.showInformationMessage(`宏 ${macroName} 已执行`);
-  } else {
-    output.error(`宏 ${macroName} 执行失败：${result.message}`);
-    output.show(true);
-    vscode.window.showErrorMessage(`宏执行失败：${result.message}`);
+  void showExcelProgress(`Excel VBA: 正在运行宏 ${macroName}...`);
+  try {
+    // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
+    const result = await client.runMacro(macroName);
+    if (result.success) {
+      output.info(`宏 ${macroName} 执行成功`);
+      if (result.message) output.log(result.message);
+      vscode.window.showInformationMessage(`宏 ${macroName} 已执行`);
+    } else {
+      output.error(`宏 ${macroName} 执行失败：${result.message}`);
+      output.show(true);
+      vscode.window.showErrorMessage(`宏执行失败：${result.message}`);
+    }
+  } finally {
+    void clearExcelProgress();
   }
 }
 
@@ -1086,16 +1099,21 @@ async function handleRunMacro(): Promise<void> {
   );
   if (!picked) return;
   output.info(`开始运行宏：${picked.label}`);
-  // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
-  const result = await client.runMacro(picked.label);
-  if (result.success) {
-    output.info(`宏 ${picked.label} 执行成功`);
-    if (result.message) output.log(result.message);
-    vscode.window.showInformationMessage(`宏 ${picked.label} 已执行`);
-  } else {
-    output.error(`宏 ${picked.label} 执行失败：${result.message}`);
-    output.show(true);
-    vscode.window.showErrorMessage(`宏执行失败：${result.message}`);
+  void showExcelProgress(`Excel VBA: 正在运行宏 ${picked.label}...`);
+  try {
+    // COM 运行宏：runMacroWithDialogHandling 自带 Excel 弹窗检测与交互处理
+    const result = await client.runMacro(picked.label);
+    if (result.success) {
+      output.info(`宏 ${picked.label} 执行成功`);
+      if (result.message) output.log(result.message);
+      vscode.window.showInformationMessage(`宏 ${picked.label} 已执行`);
+    } else {
+      output.error(`宏 ${picked.label} 执行失败：${result.message}`);
+      output.show(true);
+      vscode.window.showErrorMessage(`宏执行失败：${result.message}`);
+    }
+  } finally {
+    void clearExcelProgress();
   }
 }
 
@@ -1218,6 +1236,7 @@ async function syncLocalToVbeQuiet(skipQueue = false): Promise<void> {
   isSyncing = true;
   stateManager.setRuntime({ isSyncing: true, serviceStatus: "syncing" });
   output.info("自动同步：本地 → VBE");
+  void showExcelProgress("Excel VBA: 自动同步（本地 → VBE）...");
 
   try {
     const result = await client.syncLocalToVbe(syncDir);
@@ -1246,6 +1265,7 @@ async function syncLocalToVbeQuiet(skipQueue = false): Promise<void> {
     stateManager.setRuntime({ lastError: `自动同步异常：${msg}`, serviceStatus: "error" });
     output.error(`自动同步异常：${msg}`);
   } finally {
+    void clearExcelProgress();
     isSyncing = false;
     stateManager.setRuntime({ isSyncing: false });
     if (!skipQueue) {
@@ -1303,6 +1323,7 @@ async function syncVbeToLocalQuiet(skipQueue = false): Promise<void> {
   isSyncingVbeToLocal = true;
   stateManager.setRuntime({ isSyncing: true, serviceStatus: "syncing" });
   output.info("自动同步：Excel → 本地");
+  void showExcelProgress("Excel VBA: 自动同步（Excel → 本地）...");
 
   try {
     const result = await client.syncVbeToLocal(syncDir);
@@ -1329,6 +1350,7 @@ async function syncVbeToLocalQuiet(skipQueue = false): Promise<void> {
   } finally {
     // 延迟释放标志，给文件系统 watcher 一段缓冲期，避免本次写入触发本地 → VBE 同步
     setTimeout(() => {
+      void clearExcelProgress();
       isSyncingVbeToLocal = false;
       isSyncing = false;
       stateManager.setRuntime({ isSyncing: false });
@@ -1448,6 +1470,53 @@ function pushStateToWebview(): void {
 // ============================================================
 // Excel 窗口置顶
 // ============================================================
+
+/** 当前 excelcli 会话上下文（未连接或经 COM 附着的旧实例时返回 undefined） */
+function getExcelWindowContext(): { cliPath: string; sessionId: string } | undefined {
+  const cliPath = getExcelCliPath();
+  const sessionId = stateManager.get("cliSessionId");
+  if (!cliPath || !sessionId) return undefined;
+  return { cliPath, sessionId };
+}
+
+/**
+ * 在 Excel 状态栏显示动作进度（fire-and-forget，失败不影响主流程）。
+ * 让用户在前台 Excel 上直接看到"宏在跑 / 正在同步"，而不是对着转圈猜。
+ */
+async function showExcelProgress(text: string): Promise<void> {
+  const ctx = getExcelWindowContext();
+  await setExcelStatusText(ctx?.cliPath, ctx?.sessionId, text);
+}
+
+/** 清除 Excel 状态栏进度文本 */
+async function clearExcelProgress(): Promise<void> {
+  const ctx = getExcelWindowContext();
+  await clearExcelStatusText(ctx?.cliPath, ctx?.sessionId);
+}
+
+/** 分屏排列 Excel 主窗口：QuickPick 选择预设，让用户边看 Excel 边等 AI 干活 */
+async function handleArrangeWindow(): Promise<void> {
+  if (!stateManager.get("workbookPath")) {
+    vscode.window.showWarningMessage("请先连接 Excel 文件。");
+    return;
+  }
+  const client = createVbaClient();
+  if (!client) return;
+  const picked = await vscode.window.showQuickPick(
+    WINDOW_PRESETS.map((p) => ({ label: p.label, description: p.description, preset: p.id })),
+    { title: "排列 Excel 窗口" }
+  );
+  if (!picked) return;
+  // 走 COM 通道（Win32 SetWindowPos，不抢前台）。excelcli 的 window arrange 在
+  // ExcelMcp 2.2.0 上受 Windows 前台锁限制会确定性失败，故不使用。
+  const result = await client.setWindowArrange(picked.preset as "left-half" | "right-half" | "top-half" | "bottom-half" | "center" | "full-screen");
+  if (result.success) {
+    output.info(result.output || `Excel 窗口已${picked.label}排列`);
+  } else {
+    output.warn(`Excel 窗口排列失败：${result.message}`);
+    vscode.window.showWarningMessage(`Excel 窗口排列失败：${result.message}`);
+  }
+}
 
 /** 若用户开启了置顶选项且 Excel 已连接，将 Excel 主窗口置顶（使用 COM） */
 async function applyExcelOnTopIfNeeded(): Promise<void> {

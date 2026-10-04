@@ -15,18 +15,20 @@ Agent Skill for AI coding assistants using the Excel CLI tool (`excelcli`).
 Modern coding agents increasingly favor CLI-based workflows:
 
 ```powershell
-# Token-efficient: No schema overhead
-excelcli -q session open C:\Data\Report.xlsx
-excelcli -q range set-values --session 1 --sheet Sheet1 --range A1 --values '[["Hello"]]'
-excelcli -q session close --session 1 --save
+# Discover a session rather than inventing an ID.
+excelcli -q session list
+excelcli -q range get-values --session $sessionId --sheet Sheet1 --range A1
 ```
+
+Here `$sessionId` is the returned ID for the intended workbook. For writes and
+batch jobs, use the failure-aware lifecycle in [SKILL.md](SKILL.md).
 
 ## Installation
 
 ### GitHub Copilot
 
 The VS Code extension bundles only the MCP Server skill. Install this CLI skill
-separately with `npx skills`, as shown below, after installing `excelcli`.
+separately with `npx skills`, as shown below, and run the CLI through `npx`.
 
 ### Other Platforms
 
@@ -45,10 +47,10 @@ Extract to your AI assistant's skills directory:
 Or use npx:
 ```powershell
 # Interactive - prompts to select excel-cli, excel-mcp, or both
-npx skills add sbroenne/mcp-server-excel
+npx skills add sbroenne/mcp-server-excel-plugins
 
 # Or specify directly
-npx skills add sbroenne/mcp-server-excel --skill excel-cli
+npx skills add https://github.com/sbroenne/mcp-server-excel-plugins/tree/main/plugins/excel-cli/skills/excel-cli
 ```
 
 ## Contents
@@ -64,29 +66,26 @@ excel-cli/
 
 ## CLI Tool Installation
 
-The **GitHub Copilot `excel-cli` plugin** installs the skill plus a runtime
-bootstrap wrapper. The wrapper downloads and caches the latest self-contained
-Windows CLI runtime on first use.
+The **GitHub Copilot `excel-cli` plugin** installs the skill plus an npx-first
+wrapper for the public `@sbroenne/excelcli` package.
 
 ### Via GitHub Copilot Plugin
 
-Plugin-driven flows use the plugin wrapper and keep runtime state under the
-host-provided `PLUGIN_DATA\runtime` directory. To make `excelcli` available on
-PATH for shell commands, run the optional global shim installer from the
-installed plugin folder:
+Use the public npm package directly:
 
 ```powershell
-pwsh -ExecutionPolicy Bypass -File `
-  "$env:USERPROFILE\.copilot\installed-plugins\mcp-server-excel-plugins\excel-cli\com.github.copilot\bin\install-global.ps1"
+npx -y @sbroenne/excelcli@latest --help
 ```
 
-The global shim runs outside the plugin host, uses
-`~\.copilot\plugin-runtime\mcp-server-excel\excel-cli`, and checks for updates
-at most once every 24 hours.
+The plugin also includes `bin\start-cli.ps1`, which runs npx and preserves
+embedded quotes in JSON arguments from Windows PowerShell. No global helper
+or PATH change is required.
 
 ### Via Skill Package
 
-Plain skill-only installs still need `excelcli` available separately on PATH (for example via the standalone ZIP or the NuGet tool below).
+Plain skill-only installs can use `npx -y @sbroenne/excelcli@latest` without a
+separate CLI installation. Replace `excelcli` in the examples with that command
+unless you have installed a standalone CLI on PATH.
 
 ### Manual Download (Standalone)
 

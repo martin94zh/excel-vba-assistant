@@ -1,163 +1,111 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/pivottable/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# pivottable - Server Quirks
+# PivotTables
 
-## CRITICAL: Required Parameters
+Reuse a suitable existing PivotTable. Creating one does not configure its
+rows, columns, values, or filters; choose those fields, then refresh and read
+the actual summary.
 
-**`pivot_table_name` is REQUIRED for almost all PivotTable operations** across `pivottable`, `pivottable_calc`, and `pivottable_field` tools. The only exception is `list` (which lists all PivotTables). Always specify the PivotTable name.
+Current commands and inputs come from CLI help or MCP tool descriptions.
 
-## Calculated Fields vs DAX Measures
+| Source | Calculation approach |
+|--------|----------------------|
+| Worksheet Table or range | Ordinary aggregations and regular calculated fields |
+| Data Model | DAX measures and model relationships |
 
-PivotTable calculated fields work well for simple single-table formulas. Use DAX measures for complex scenarios.
+## Calculated fields are calculations on aggregates
 
-| Feature | PivotTable Calculated Field | DAX Measure |
-|---------|----------------------------|-------------|
-| Single-table formulas | ✅ Works (e.g., `=Qty*Price`) | ✅ Works |
-| Cross-table | NOT SUPPORTED | Full support |
-| Complex logic | Limited | Full DAX |
-| Reusable | Per PivotTable only | Across all PivotTables |
+For a regular PivotTable with a numeric `Sales` field, doubling Sales is safe.
+This example shows the distinction between defining a calculation, placing it
+in Values, and checking the result:
 
-### Calculated Field Workflow
-
-```
-pivottable_calc(create-calculated-field, pivot_table_name="SalesPivot", field_name="Revenue", formula="=Quantity*UnitPrice")
-pivottable_field(add-value-field, pivot_table_name="SalesPivot", field_name="Revenue", aggregation_function="Sum")
-```
-
-### DAX Measure Workflow (for complex scenarios)
-
-```
-table(add-to-data-model, table_name="Sales")
-datamodel(create-measure, table_name="Sales", measure_name="Revenue", dax_formula="SUMX(Sales, Sales[Quantity]*Sales[UnitPrice])")
-pivottable(create-from-datamodel, pivot_table_name="SalesPivot", destination_sheet="Analysis", destination_cell="A3", table_name="Sales")
+```mcp
+pivottable_calc(action: 'create-calculated-field', session_id: sessionId, pivot_table_name: 'SalesPivot', field_name: 'DoubleSales', formula: '=Sales*2')
+pivottable_field(action: 'add-value-field', session_id: sessionId, pivot_table_name: 'SalesPivot', field_name: 'DoubleSales', aggregation_function: 'Sum')
+pivottable(action: 'refresh', session_id: sessionId, pivot_table_name: 'SalesPivot')
+pivottable_calc(action: 'get-data', session_id: sessionId, pivot_table_name: 'SalesPivot')
 ```
 
-### When to Use DAX Instead of Calculated Fields
-
-- Multi-table calculations (need relationships between tables)
-- Complex logic (time intelligence, YTD, running totals)
-- Calculations involving filtered contexts
-- Reusable measures across multiple PivotTables
-
-## PivotTable Source Types
-
-| Source | Create Action | Supports DAX Measures? |
-|--------|---------------|------------------------|
-| Worksheet Table | `create-from-table` | NO - worksheet PivotTable |
-| Data Model | `create-from-datamodel` | YES - full DAX support |
-| External | `create-from-range` with `source_range` | NO |
-
-**Rule**: If you need calculated revenue/aggregations, use Data Model as source.
-
-## Refresh Behavior (CRITICAL)
-
-PivotTables do NOT auto-refresh when source data changes!
-
-**After adding rows to source table:**
-```
-table(append, ...)           # Add rows to worksheet table
-pivottable(refresh, ...)     # Refresh PivotTable to see new rows
-datamodel(refresh)           # ALSO refresh Data Model if using DAX measures
+```cli
+excelcli -q pivottablecalc create-calculated-field --session $sessionId --pivot-table-name SalesPivot --field-name DoubleSales --formula '=Sales*2'
+excelcli -q pivottablefield add-value-field --session $sessionId --pivot-table-name SalesPivot --field-name DoubleSales --aggregation-function Sum
+excelcli -q pivottable refresh --session $sessionId --pivot-table-name SalesPivot
+excelcli -q pivottablecalc get-data --session $sessionId --pivot-table-name SalesPivot
 ```
 
-**After Power Query refresh:**
-```
-powerquery(refresh, ...)     # Refreshes Power Query AND Data Model
-# PivotTables connected to Data Model auto-refresh
-```
+The session, PivotTable, and source field must already exist. Check each result
+before continuing. Do not use `=Quantity*UnitPrice` as a regular PivotTable
+calculated field for line-item revenue: rows `(2,10)` and `(3,20)` have total
+revenue 80, not the product of summed inputs, 150.
 
-## PivotCache Options
+Calculate each source row's revenue and sum that column, or use a model measure:
 
-- `pivottable(get-cache-options)`: Read refresh, retained-item, optimization, and saved-source settings.
-- `pivottable(set-cache-options)`: Set `enable_refresh`, `refresh_on_file_open`, `missing_items_limit`, `optimize_cache`, or `save_source_data`.
-- `missing_items_limit` values: `Default`, `None`, `Max`, `Max2`.
-- Deleted-item retention applies only to regular PivotTables. OLAP/Data Model caches manage members in the model.
-
-## Field Configuration
-
-### Row/Column/Value Fields
-
-When creating PivotTables, configure fields in order:
-1. Add Row fields: `pivottable_field(add-row-field, pivot_table_name="SalesPivot", field_name="Region")`
-2. Add Column fields: `pivottable_field(add-column-field, pivot_table_name="SalesPivot", field_name="Year")`
-3. Add Value fields: `pivottable_field(add-value-field, pivot_table_name="SalesPivot", field_name="Amount", aggregation_function="Sum")`
-4. Add filters: `pivottable_field(add-filter-field, pivot_table_name="SalesPivot", field_name="Status")`
-5. **Refresh to update display**: `pivottable(refresh, pivot_table_name="SalesPivot")`
-
-**IMPORTANT**: Field operations are structural only - they modify the PivotTable layout but don't trigger visual refresh. Call `pivottable(refresh)` after configuring all fields to update the display. This is especially important for OLAP/Data Model PivotTables.
-
-### Manual Grouping
-
-```
-pivottable_field(group-items, pivot_table_name="SalesPivot", field_name="Region", item_names=["North", "South"], group_name="Core Regions")
-# Use groupedFieldName from the result:
-pivottable_field(ungroup-field, pivot_table_name="SalesPivot", grouped_field_name="Region2")
+```dax
+SUMX(Sales, Sales[Quantity] * Sales[UnitPrice])
 ```
 
-Manual grouping requires a regular PivotTable and a field already placed in the Row or Column area. OLAP/Data Model PivotTables must add grouping columns in the model.
+The table must be in the model first; see [Data Model guidance](/reference/datamodel/).
 
-### Drill Through
+## Show Values As is separate from aggregation
 
-```
-pivottable(drill-through, pivot_table_name="SalesPivot", cell_address="G4")
-```
+Sum/Average and Show Values As are independent choices. Select the exact
+displayed Values instance, especially when several instances share a source
+field. Removing an additional calculation need not change aggregation.
 
-The target must be a value cell in a regular PivotTable data body. Excel creates a new worksheet containing the underlying source rows. OLAP/Data Model drill-through is provider-dependent and intentionally not exposed as a deterministic operation.
+Differences from a previous item depend on current sort/filter order. Parent
+percentages depend on the relevant row/column hierarchy. Do not turn native
+blank/error results into zero.
 
-### Aggregation Functions for Value Fields
+Excel does not expose every model-backed base-field/item setting and can ignore
+additional calculations on model measures. Use a source measure when native
+settings cannot establish the result. Read back settings and displayed data.
 
-| Function | Use Case |
-|----------|----------|
-| Sum | Totals (revenue, quantity) |
-| Count | Record counts |
-| Average | Mean values |
-| Min/Max | Extremes |
-| CountNums | Count numbers only |
-| StdDev/Var | Statistical analysis |
+## Refresh, layout, and grouping
 
-## Common Patterns
+Refresh sources before their summaries. Worksheet-source edits may need a model
+refresh, followed by PivotTable refresh; Power Query refresh updates its model
+load but does not replace the dependent PivotTable refresh.
 
-### Revenue Analysis from Worksheet Table
+- `sort-field` orders the selected field's labels in ascending or descending
+  order, including Data Model fields identified by their exact CubeField name.
+- `set-field-name` updates the displayed value-field caption when the selected
+  source field is in Values; it does not rename the source worksheet column.
+  Use MCP `field_name` / `custom_name` or CLI `--field-name` / `--custom-name`.
+- `set-field-format` accepts invariant Excel number formats. A bare dollar sign
+  remains a literal dollar sign, not the machine's regional currency. Escaped or
+  quoted literals and bracketed currency/locale codes remain intact. Excel may
+  return a normalized format with an escaped dollar sign. Use MCP `number_format`
+  or CLI `--number-format`.
 
-```
-# Option 1: Add revenue column to source table FIRST
-range(set-formulas, sheet_name="Sales", range_address="I2", formulas=[["=[@Quantity]*[@UnitPrice]"]])
-pivottable(create-from-table, pivot_table_name="SalesPivot", destination_sheet="Analysis", destination_cell="A3", table_name="SalesTable")
-pivottable_field(add-value-field, pivot_table_name="SalesPivot", field_name="Revenue", aggregation_function="Sum")
+Choose Compact for a nested view or Tabular/Outline when separate field columns
+and repeated labels suit the output. Use the PivotTable's own styles and field
+number formats, not plain-cell styling that refresh can overwrite.
 
-# Option 2: Use Data Model (RECOMMENDED)
-table(add-to-data-model, table_name="SalesTable")
-datamodel(create-measure, table_name="SalesTable", measure_name="Revenue", dax_formula="SUMX(SalesTable, SalesTable[Quantity]*SalesTable[UnitPrice])")
-pivottable(create-from-datamodel, pivot_table_name="SalesPivot", destination_sheet="Analysis", destination_cell="A3", table_name="SalesTable")
-```
+Grouping and calculated fields described here belong to regular PivotTables.
+For model-backed summaries, use source grouping columns and DAX measures.
+Drill-through on a regular value cell creates a new sheet of underlying rows;
+it is not a read-only audit.
 
-### Multi-Table Analysis
+Use a verified live [PivotChart](/reference/chart/) when a chart must follow fields and
+filters, rather than a regular chart of displayed cells.
 
-Always use Data Model for multi-table analysis:
-```
-table(add-to-data-model, table_name="Sales")
-table(add-to-data-model, table_name="Products")
-datamodel_relationship(create-relationship, from_table="Sales", from_column="ProductID", to_table="Products", to_column="ProductID")
-datamodel(create-measure, table_name="Sales", measure_name="Revenue", dax_formula="SUMX(Sales, RELATED(Products[Price])*Sales[Quantity])")
-pivottable(create-from-datamodel, pivot_table_name="SalesPivot", destination_sheet="Analysis", destination_cell="A3", table_name="Sales")
-```
+## Native filters, layout, and source changes
 
-## Layout Styles
+Manual item visibility and calculated filters are different. Clearing calculated
+filters need not clear manual selections or other fields. Use the actual placed
+field and displayed Values captions rather than guessing from source names.
+Multiple filters are not automatically authorized by adding another criterion.
 
-The `row_layout` parameter on `pivottable_calc(set-layout)` controls PivotTable appearance:
+Repeated labels require a noncompact layout. Expand/collapse targets one
+visible parent item, not every member. These calculated-filter and item-expansion
+features do not cover provider-dependent Data Model behavior.
 
-| Value | Style | Description |
-|-------|-------|-------------|
-| 0 | Compact | Default, nested row labels |
-| 1 | Tabular | Each field in separate column, best for exports |
-| 2 | Outline | Hierarchical with expand/collapse |
+Inspect the source, shared cache users, and connected controls before changing
+data or cache settings. A supported regular source replacement retains the
+same field schema and isolates the selected PivotTable; connected slicers and
+timelines must first be deliberately disconnected. External/model source
+replacement is not supported here.
 
-## Common Errors and Solutions
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| "Unknown field" aggregation error | Calculated field type limitation | Use DAX measure instead |
-| "Table not found" | Source not in Data Model | Add with `table(add-to-data-model)` |
-| "Field not found" | Typo or Data Model not refreshed | Refresh Data Model, check field names |
-| Data doesn't update | Source changed without refresh | Call `pivottable(refresh)` |
-| DAX measures missing | Created on worksheet PivotTable | Use `create-from-datamodel` |
+Shared-cache settings can affect other summaries and therefore restrict edits.
+After a failed write, inspect the actual state; do not assume rollback or
+rebuild unrelated caches.

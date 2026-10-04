@@ -1,30 +1,45 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/workbook/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
 # Workbook Lifecycle
 
-Use the `workbook` tool or CLI command group for workbook-level metadata, file variants, publishing, and external links. Use `file` only for opening, creating, listing, and closing sessions.
+Inspect the intended workbook's saved/read-only state, properties, and external
+dependencies before changing its format or publishing output. Session lifecycle
+is separate; see [session and saving guidance](/reference/behavioral-rules/#sessions-and-failures).
+
+Current commands and supported inputs come from CLI help or MCP tool descriptions.
 
 ## Metadata and document properties
 
-- `get-info` returns the active workbook name, path, Excel file format, saved/read-only state, and password/write-reservation flags.
-- `list-document-properties` can include built-in properties, custom properties, or both.
-- `get-document-property` and `set-document-property` require `scope`: `built-in` or `custom`.
-- Built-in properties can be read and updated but not deleted.
-- Missing custom properties are created as string properties by `set-document-property`; `delete-document-property` removes custom properties only.
+Use built-in properties for existing document metadata and custom properties
+for workbook-specific information. Custom properties can be removed; built-in
+ones are maintained by Excel. Avoid putting private paths, credentials, or
+connection strings in published properties.
 
 ## Save and publish
 
-- `save-as` supports `auto`, `xlsx`, `xlsm`, `xlsb`, and `xls`. The file extension must match the selected format, and the active session follows the new path.
-- `save-copy-as` preserves the current format and leaves the active workbook/session unchanged. Its target extension must match the active workbook.
-- `export-fixed-format` publishes PDF or XPS. Keep `open_after_publish=false` for unattended workflows.
-- Output directories must already exist. Existing files require `overwrite=true`.
+Choose the output according to the task. Saving under a new name changes the
+active workbook's path; saving a same-format copy leaves the active workbook
+unchanged. PDF/XPS output is a published view, not an editable workbook.
 
-Changing formats can remove unsupported workbook features. In particular, saving a macro-enabled workbook as `.xlsx` removes VBA content after Excel's format conversion.
+Saved `.xlsx`, `.xlsm`, `.xlsb`, and `.xls` workbooks can be reopened with
+`file(action: 'open', path: ...)` (MCP) or `excelcli file open --path ...` (CLI).
+
+Replacing an output needs authorization. A format conversion can remove
+features: saving a macro-enabled workbook as `.xlsx` removes its VBA content.
+Inspect the result and active path before continuing work.
+
+For unattended exports, avoid opening viewers or modal previews. Configure
+the [print layout](/reference/worksheet/#styling-and-outlines) before publishing.
 
 ## External Excel links
 
-1. Call `list-external-links` and use the exact returned `source`.
-2. Call `update-external-link` to refresh one source.
-3. Call `break-external-link` only with explicit user intent: it permanently replaces linked formulas with their current values.
+Discover the actual linked sources before refreshing them. A refresh can change
+calculated results; it is not merely inspecting the workbook.
 
-Printing and print preview are not exposed. Printing can send output to a physical default printer, and preview is modal and can block unattended Excel sessions.
+Breaking a link permanently replaces linked formulas with their current values.
+Do it only when that change is intended, and inspect the resulting values before
+saving. There is no tool-level undo. Closing without saving loses all earlier
+unsaved work too.
+
+Printing and print preview are not exposed: a default printer can produce
+physical output, and modal preview can block unattended sessions.

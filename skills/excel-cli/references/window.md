@@ -1,117 +1,56 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/window/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# Window Management Reference
+# Window Management
 
-## Tools
+Window changes affect only the selected session's Excel instance. Do not create
+another session just to change visibility. Use CLI help or MCP tool descriptions
+for current window controls and inputs.
 
-- **`window`**: Control Excel window visibility, position, state, and worksheet-specific views
+## Worksheet views
 
-## Actions
+Inspect the active sheet, selection, cell, and chart when that context matters.
+Context inspection does not show, activate, or select anything, and another
+workbook's selection is not a substitute for unavailable context.
 
-| Action | Purpose | Parameters |
-|--------|---------|------------|
-| `show` | Make Excel visible and bring to front | *(none)* |
-| `hide` | Hide the Excel window | *(none)* |
-| `bring-to-front` | Bring Excel to foreground | *(none)* |
-| `get-info` | Get window state information | *(none)* |
-| `set-state` | Set window state | `window_state` (normal, minimized, maximized) |
-| `set-position` | Set position and size | `left`, `top`, `width`, `height` (all optional, in points) |
-| `arrange` | Apply preset layout | `preset` (left-half, right-half, top-half, bottom-half, center, full-screen) |
-| `set-status-bar` | Show text in Excel status bar | `text` (required — e.g. "Building PivotTable...") |
-| `clear-status-bar` | Restore default status bar | *(none)* |
-| `get-view` | Read panes, zoom, and display options, including formula display | `sheet_name` |
-| `freeze-panes` | Freeze top rows and/or left columns | `sheet_name`, `frozen_rows`, `frozen_columns` |
-| `unfreeze-panes` | Remove frozen panes and splits | `sheet_name` |
-| `set-split` | Create movable pane splits | `sheet_name`, `split_rows`, `split_columns` |
-| `set-zoom` | Set worksheet zoom (10-400%) | `sheet_name`, `zoom` |
-| `set-display-options` | Show/hide gridlines, headings, outline symbols, or formulas | `sheet_name`, optional display flags including `show_formulas` |
+Frozen panes retain rows and columns above/left of a boundary; movable splits
+are different and replace frozen panes. Set zoom and display choices before a
+split when exact pane counts matter, then inspect the resulting view.
 
-## Worksheet View Controls
+## Visibility and placement
 
-View settings belong to a workbook window and apply to the named active worksheet. Always pass `sheet_name`.
+Preserve existing visibility unless a change is requested. Keeping a workbook
+open means retaining its session, not showing a hidden window. See the shared
+[visibility policy](/reference/behavioral-rules/#visibility).
 
-```text
-1. window(freeze-panes, sheet_name='Summary', frozen_rows=1, frozen_columns=1)
-2. window(set-zoom, sheet_name='Summary', zoom=125)
-3. window(set-display-options, sheet_name='Summary', show_gridlines=false, show_formulas=true)
-4. window(get-view, sheet_name='Summary')
+`show` and `bring-to-front` restore a minimized window to its previous normal
+or maximized state before bringing it forward. `bring-to-front` leaves a hidden
+session hidden and returns guidance to use `show` first. If Windows refuses
+foreground activation, the operation reports an error; any visibility or
+window restoration already applied remains in effect.
+An unsupported arrange `preset` (MCP) / `--preset` (CLI) is rejected before
+changing visibility, window state, or bounds. This does not promise rollback
+if Excel itself fails while applying a supported preset.
+
+Arranging or restoring a normal/maximized window can make it visible. Layout
+uses the monitor containing Excel, and positioning uses points rather than
+pixel or cell counts. Do not assume those changes preserve hidden mode.
+
+For requested side-by-side work:
+
+```mcp
+window(action: 'show', session_id: sessionId)
+window(action: 'arrange', session_id: sessionId, preset: 'right-half')
 ```
 
-`freeze-panes` interprets values as the number of rows above and columns left of the boundary. At least one count must be greater than zero. `set-split` disables frozen panes; pass zero for both counts to remove splits.
-
-Movable splits are stored by Excel as window geometry. Set zoom and display options before `set-split` when exact row or column counts must remain stable.
-
-Omitted `set-display-options` flags remain unchanged. `show_formulas` switches the worksheet view between calculated values and formula text.
-
-## When to Use Window Management
-
-### Interactive "Agent Mode" — User Watches AI Work in Excel
-```
-1. window(show)                              → Excel becomes visible
-2. window(arrange, preset='right-half')      → Position Excel on right side of screen
-3. ... perform Excel operations ...          → User watches changes live
-4. window(hide)                              → Hide when done (optional)
+```cli
+excelcli -q window show --session $sessionId
+excelcli -q window arrange --session $sessionId --preset right-half
 ```
 
-### Side-by-Side Layout
-```
-1. window(show)
-2. window(arrange, preset='left-half')       → Excel takes left half of screen
-   → User's AI assistant occupies the right half
-```
+Visible work needs no extra charts or formatting. Optional status text should
+be cleared after success or failure. Do not tell a user to inspect a hidden
+window. [Screenshots](/reference/screenshot/) can bring Excel forward and need an
+interactive desktop.
 
-### Check Current State
-```
-1. window(get-info) → Returns visibility, position, size, window state, foreground status
-```
-
-## Arrange Presets
-
-| Preset | Position | Use Case |
-|--------|----------|----------|
-| `left-half` | Left 50% of Excel's monitor work area | Side-by-side with AI assistant |
-| `right-half` | Right 50% of Excel's monitor work area | Side-by-side with AI assistant |
-| `top-half` | Top 50% of Excel's monitor work area | Stacked view |
-| `bottom-half` | Bottom 50% of Excel's monitor work area | Stacked view |
-| `center` | Centered, 60% of Excel's monitor work area | Focused work |
-| `full-screen` | Maximized on Excel's current monitor | Full visibility |
-
-## Best Practices
-
-1. **Show before operating visually**: If the user wants to watch operations, call `show` + `arrange` before starting the workflow
-2. **Visibility syncs with session**: Show/hide updates session metadata — `file(list)` reflects the current visibility state
-3. **Arrange makes visible**: `arrange` automatically shows Excel if it's hidden
-4. **set-state makes visible**: Setting state to normal/maximized automatically shows Excel
-5. **set-position ensures normal state**: Setting position switches from maximized/minimized to normal automatically
-6. **Use get-info to check state**: Before positioning, check if Excel is already visible and where it is
-
-## Common Patterns
-
-### Demo Mode — Show User the Work
-```
-1. file(open, path='report.xlsx')
-2. window(show)
-3. window(arrange, preset='left-half')
-4. ... create tables, charts, formatting ...
-5. file(close, save=true)
-   → Excel hidden automatically on close
-```
-
-### Quick Peek — Show Result Then Hide
-```
-1. ... perform operations while hidden ...
-2. window(show)                    → Show the result
-3. screenshot(capture-sheet)       → Also capture for chat
-4. window(hide)                    → Hide again
-```
-
-### Status Bar Feedback — Live Progress
-```
-1. window(show)
-2. window(arrange, preset='right-half')
-3. window(set-status-bar, text='Writing 500 rows...') → User sees progress
-4. range(set-values, ...)
-5. window(set-status-bar, text='Building chart...')
-6. chart(create-from-range, ...)
-7. window(clear-status-bar)                           → Clean up when done
-```
+Close only when authorized and active work has finished. Keep intended edits
+through explicit saving; see [session recovery](/reference/behavioral-rules/#sessions-and-failures).

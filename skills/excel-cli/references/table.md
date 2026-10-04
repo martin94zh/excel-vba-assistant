@@ -1,96 +1,65 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/table/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# table - Server Quirks
+# Excel Tables
 
-**Data Model workflow (CRITICAL)**:
+Create a worksheet Table when requested or needed, not for every rectangular
+dataset. Reuse suitable existing Tables instead of recreating them.
 
-Excel Tables on worksheets are NOT automatically in the Data Model (Power Pivot).
-To analyze worksheet data with DAX measures:
+Current Table commands and inputs come from CLI help or MCP tool descriptions.
 
-1. Ensure data is formatted as an Excel Table (use preflight, then create if needed)
-2. Use `add-to-data-model` action to add the table to Power Pivot
-3. Then use `datamodel` to create DAX measures on it
+## Conversion and preservation
 
-**Action disambiguation**:
+Check headers, merged cells, effective boundaries, and sorting risks before
+conversion. Creation checks can block deterministic problems, but warnings
+remain advisory. A safe-to-create result does not establish that conversion
+suits every business or layout requirement. Choose header handling deliberately.
 
-- create: Create NEW table from a range (requires `sheet_name`, `table_name`, and `range_address`). Pass `table_style` here to style at creation time.
-- preflight: Check a proposed table without changing the workbook. It returns the effective range, typed findings, and `safeToCreate`. Merged cells plus blank or duplicate headers are blockers. Excluded contiguous columns and formulas that may be unsafe to sort are heuristic warnings. For ranges over 100,000 cells, it returns a `FormulaScanSkipped` warning instead of allocating the full formula matrix.
-- read: Get table metadata (range, columns, style, row counts)
-- get-data: Get actual table DATA as 2D array (use `visible_only=true` for filtered data)
-- rename: Rename an existing table
-- delete: Remove table (keeps data, removes table formatting)
-- resize: Change table range (expand/contract)
-- set-style: Change table visual style (TableStyleLight1-21, TableStyleMedium1-28, TableStyleDark1-11). Default is TableStyleMedium2.
-- toggle-totals: Show or hide the totals row (`show_totals: true/false`)
-- set-column-total: Set the aggregate function on a totals-row column (Sum, Count, Average, Min, Max, None)
-- add-to-data-model: Add an existing worksheet table to Power Pivot for DAX analysis
-- append: Add rows to existing table (requires `rows` or `rows_file`)
-- **create-from-dax**: Create table populated by a DAX EVALUATE query from Data Model
-- **update-dax**: Update an existing DAX-backed table's query
-- **get-dax**: Get the DAX query behind a DAX-backed table
+Removing a Table keeps its cell data but can break dependent objects. Shrinking
+changes membership; it is not permission to clear excluded cells. Appending
+must respect existing column order.
 
-**Table styling — always use table styles, not range_format**:
+Metadata and data reads answer different questions. Ordinary data reads include
+filtered rows; explicitly inspect visible rows when the result should reflect
+the active filter.
 
-Excel Tables manage their own header/row/totals formatting through table styles. Never use `range_format(action: 'format-range')` on table header rows — it conflicts with the table style and produces inconsistent formatting.
+Every row in `rows` or `rows_file`
+(MCP) / `--rows` or `--rows-file` (CLI) must have exactly the Table's column
+count; include `null` for an intentionally blank cell. All row widths are checked
+before writing cells or changing calculation mode. A mismatched row is rejected
+without truncating values, inserting incomplete records, or expanding the Table.
+This validation does not promise rollback for unrelated later Excel failures.
 
-| Goal | Correct approach |
-|------|-----------------|
-| Style a table | `table(action: 'set-style', table_style: 'TableStyleMedium2')` |
-| Style at creation | `table(action: 'create', table_style: 'TableStyleMedium2', ...)` |
-| Custom branding on table | Use a Medium/Dark table style that matches your palette — avoid overriding individual cells |
+## Native filtering
 
-Common table style choices:
-- `TableStyleMedium2` — standard blue, most widely used
-- `TableStyleMedium9` — orange accent
-- `TableStyleLight1` — minimal borders, no header fill
-- `TableStyleDark1` — dark header with white text
+Keep filtering within the intended Table. Clearing its filters does not clear
+every filter on the worksheet. For plain ranges or criteria-based copied output,
+use the [range filtering workflow](/reference/range/#ordinary-range-and-advanced-filtering)
+without converting the data to a Table first.
 
-**DAX-backed tables** (NEW):
+Native date groups, comparisons, value lists, colors, and icons are different
+filter choices. Excel can normalize criteria, so compare their meaning and
+actual visible rows rather than the request's original spelling.
+Unavailable criterion reads are not evidence of an empty filter.
 
-Create worksheet tables populated by DAX EVALUATE queries against the Data Model.
-Perfect for creating summary/report tables with aggregated data.
+## Styling
 
-```
-Workflow:
-1. Have data in Data Model (via table add-to-data-model or powerquery)
-2. Use create-from-dax with a DAX EVALUATE query
-3. Table is created on worksheet with query results
-4. Use update-dax to change the query, get-dax to inspect it
-```
+The Table owns its visual style; ordinary range formatting is not its style
+system. Column number formats and totals calculations are separate decisions.
+Preserve an existing template unless a change is requested.
 
-Example DAX queries for create-from-dax:
-- `EVALUATE SUMMARIZE('Sales', 'Sales'[Region], "Total", SUM('Sales'[Amount]))`
-- `EVALUATE TOPN(10, 'Products', 'Products'[Revenue], DESC)`
-- `EVALUATE FILTER('Customers', 'Customers'[Country] = "USA")`
+## Model and worksheet results
 
-**add-to-data-model behavior**:
+A worksheet Table is not automatically in Power Pivot. Add it to the model,
+or load a query to the model, before relying on model relationships or measures.
+After worksheet-source edits, follow the
+[model refresh sequence](/reference/datamodel/#refresh-is-not-calculation).
 
-- Only works on Excel Tables (ListObjects), not plain ranges
-- Table appears in Power Pivot with same name
-- After adding, use datamodel to create DAX measures
-- Idempotent: calling on already-added table is a no-op
+A DAX-backed worksheet Table displays a model query result. It is not a DAX
+calculated table inside the model. Use returned query data when no worksheet
+object is needed, or a [PivotTable](/reference/pivottable/) for interactive filtering.
 
-**When to use which tool**:
-
-| Goal | Tool |
-|------|------|
-| Create/manage worksheet tables | table |
-| Add worksheet table to Power Pivot | table (add-to-data-model) |
-| Import external data to Data Model | powerquery (`load_destination='data-model'`) |
-| Create DAX measures | datamodel |
-| Create PivotTables from Data Model | pivottable |
-
-**Common mistakes**:
-
-- Trying to create DAX measures without first adding table to Data Model
-- Using datamodel to add tables (it only manages existing Data Model tables)
-- Confusing get-data (returns cell values) with read (returns metadata)
-- Forgetting `has_headers` when creating tables from headerless data
-- Skipping preflight when warnings about excluded columns or formula sorting need human review. Create always enforces deterministic blockers, but warnings do not block it.
-
-**Server-specific quirks**:
-
-- Style parameter is overloaded: table style name OR total function (context-dependent)
-- Use `rows` for inline 2D data or `rows_file` for JSON/CSV input when appending
-- `visible_only` only applies to the get-data action
-- Table names must be unique within workbook (Excel requirement)
+`update-dax` stores the new connection command before executing it. If the
+query fails, do not assume the original command was restored: `get-dax` reports
+the stored command, while worksheet rows can still contain the last successful
+result. Correct the query and call `update-dax` again to establish a successful
+refresh.

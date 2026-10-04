@@ -1,51 +1,55 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/drawing/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# drawing - Server Quirks
+# Drawing Objects
 
-Use `drawing` for worksheet images, AutoShapes, text boxes, connectors, safe Forms controls, and sparklines.
+Discover the intended worksheet objects before updating or deleting them.
+Names belong to a worksheet, not the whole workbook. Use current CLI help or
+MCP tool descriptions for supported object settings and inputs.
 
-## Object lifecycle
+## Drawing layout
 
-| Action | Purpose |
-|--------|---------|
-| `list-objects` | List drawing objects on one worksheet |
-| `get-object` | Read one object by name |
-| `add-image` | Embed a local image |
-| `add-shape` | Add a geometric, arrow, or flowchart AutoShape |
-| `add-text-box` | Add formatted text |
-| `add-connector` | Add straight, elbow, or curved connectors |
-| `add-form-control` | Add a worksheet Forms control |
-| `update-object` | Rename, move, resize, rotate, format, or change bindings |
-| `delete-object` | Delete by object name |
+Alignment and distribution use the selected objects' extent, not the page or
+whole worksheet. Leave unselected objects alone, and keep enough space for
+labels, tables, and charts.
 
-Object names are worksheet-local. Call `list-objects` before updates or deletion when the exact name is unknown.
+Grouping, ungrouping, and duplication can change native names and membership.
+Excel can flatten groups when regrouping. Inspect returned names, members,
+positions, and stacking order instead of assuming the old hierarchy survived.
 
-Colors use `#RRGGBB`. Position and size values use points. Placement values are:
+Geometry uses points. Cell widths and heights vary, so do not assume a fixed
+conversion between cells and object coordinates.
 
-- `1`: move and size with cells
-- `2`: move but do not size with cells
-- `3`: free floating
+Drawing layout rejects protected drawing objects, charts, ActiveX/OLE, and
+unknown types. Use [chart guidance](/reference/chart/) for charts. Duplication does not
+copy macro-bound objects or group members as a workaround.
+
+## Rejected input
+
+Malformed `font_color`, `fill_color`, or `line_color` values (CLI:
+`--font-color`, `--fill-color`, `--line-color`) are rejected before objects are
+created or changed. Invalid sparkline colors do not change existing sources,
+types, or markers or leave newly created groups behind.
+
+For `update-object`, `linked_cell` and `input_range` (CLI: `--linked-cell` and
+`--input-range`) on a non-Forms object are rejected before changing its name,
+position, text, or formatting. This input validation is not a general rollback
+guarantee for failures while Excel applies valid settings.
+
+Bindings unsupported by a Forms-control subtype are also rejected before
+`add-form-control` creates an object or `update-object` changes it.
 
 ## Safe Forms controls
 
-Supported controls are Button, CheckBox, DropDown, GroupBox, Label, ListBox, OptionButton, ScrollBar, and Spinner.
+Choose a supported Forms control only when the task needs worksheet interaction.
+Some controls can link to a cell or list range; others cannot. Inspect actual
+bindings instead of assuming the control has written its intended value.
 
-- `linked_cell`: CheckBox, DropDown, ListBox, OptionButton, ScrollBar, and Spinner
-- `input_range`: DropDown and ListBox only
-- Button, GroupBox, and Label return explicit nulls for both binding properties
-
-ActiveX/OLE controls and macro assignment are intentionally unavailable. Do not try to create them through VBA as a workaround.
+ActiveX/OLE and macro assignment are intentionally unavailable. Do not bypass
+that boundary through VBA.
 
 ## Sparklines
 
-Use `add-sparkline`, `get-sparkline`, `list-sparklines`, `update-sparkline`, and `delete-sparkline`.
-
-- Types: Line, Column, WinLoss
-- `source_range`: data to visualize
-- `location_range`: cells that host the sparklines
-- Line sparklines can show markers
-
-```powershell
-excelcli drawing add-shape --session <id> --sheet "Dashboard" --shape-type RoundedRectangle --name "Status" --text "Ready" --fill-color "#70AD47"
-excelcli drawing add-sparkline --session <id> --sheet "Dashboard" --source-range "B2:E2" --location-range "F2" --sparkline-type Line
-```
+Keep source data and destination cells aligned. Sparklines show compact trends,
+not a replacement for labeled charts when units or comparisons need explanation.
+Preserve neighboring content when choosing their locations, and inspect the
+result after source or layout changes.

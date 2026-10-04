@@ -1,64 +1,89 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/workflows/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# Excel MCP Server - Key Constraints
+# Key Constraints & Sequencing
 
-These are the critical constraints and workarounds specific to Excel automation via COM.
+These are alternatives, not steps to run on every workbook. Read only the
+guide needed for an unresolved decision.
 
-## Excel Power Pivot Limitations
+| Need | Surface |
+|------|---------|
+| Existing cell values or formulas | [Ranges](/reference/range/); no query/model setup |
+| Direct CSV or legacy HTML import | [QueryTables](/reference/querytable/) |
+| Modern imports or stored transformations | [Power Query](/reference/powerquery/) |
+| Aggregation over loaded model data | [Data Model/DAX](/reference/datamodel/) |
+| Cross-table filtering | [Model relationships](/reference/datamodel/); load tables first |
+| Interactive summary | [PivotTables](/reference/pivottable/); model setup only when needed |
+| A chart following PivotTable fields/filters | [Live PivotCharts](/reference/chart/), not a chart of displayed cells |
+| Requested report layout | [Optional formatting](/reference/report-formatting/) |
 
-Excel's Power Pivot has key limitations compared to Power BI/SSAS:
+## CLI batch jobs
 
-| Feature | Availability | Workaround |
-|---------|--------------|------------|
-| Calculated Tables | NOT SUPPORTED | Create table in Power Query |
-| Calculated Columns | No COM API | Use Power Query or DAX measures |
-| Measures | Full support | - |
-| Relationships | Full support | - |
+MCP has no equivalent batch tool: await dependent calls. CLI batch avoids
+repeated process startup for a known sequence. It is not a transaction.
+Use individual commands when the next step needs inspection.
 
-**Implication**: Design your architecture to put computed columns in Power Query, not DAX.
+Batch arguments use Service camel-case names, not CLI flags. Check every NDJSON success
+flag, the exit status, and expected command count. Use `--stop-on-error`;
+otherwise errors do not stop later commands. Keep save/close outside the batch.
 
-## Architecture: Power Query vs DAX
+This example assumes authorized edits and save/close of a workbook opened
+exclusively for the job. `$path` is the supplied path, `Sales` already exists,
+and target cells have been inspected. `commands.json` is a job-owned file.
+For a reused session, report partial work without discarding earlier edits.
 
-| Layer | Use For | Update Frequency |
-|-------|---------|------------------|
-| Power Query | Data loading, transformations, computed columns | When source changes |
-| Relationships | Star schema structure | Rarely |
-| DAX | Business calculations, aggregations | Frequently |
+```cli
+$path = [IO.Path]::GetFullPath($path)
+$listed = excelcli -q session list | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw "Cannot inspect existing sessions." }
+if ($listed.sessions | Where-Object { $_.filePath -eq $path }) {
+    throw "Reuse the existing session; this job must not discard its unsaved work."
+}
 
-**Why separate?** DAX measures recalculate on refresh without re-running Power Query. Useful when lookup/rate tables change often.
+@'
+[
+  {"command":"range.set-values","args":{"sheetName":"Sales","rangeAddress":"A1:B2","values":[["Product","Amount"],["Widget",1250]]}},
+  {"command":"range.set-number-format","args":{"sheetName":"Sales","rangeAddress":"B2","formatCode":"$#,##0.00"}}
+]
+'@ | Set-Content commands.json -Encoding utf8
 
-## Tool Sequencing
-
-### Data Model Prerequisites
+$opened = excelcli -q session open $path | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or -not $opened.sessionId) { throw "Open failed; inspect session state." }
+$sessionId = $opened.sessionId
+$save = $false
+$jobError = $null
+try {
+    $output = @(excelcli -q batch --session $sessionId --input commands.json --stop-on-error)
+    $exit = $LASTEXITCODE
+    $results = @($output | ConvertFrom-Json)
+    if ($exit -ne 0 -or $results.Count -ne 2 -or ($results | Where-Object { -not $_.success })) {
+        throw "Batch failed; this job will close without saving. Results: $($output -join ' ')"
+    }
+    $save = $true
+}
+catch {
+    $jobError = $_
+    throw
+}
+finally {
+    try {
+        $listed = excelcli -q session list | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) { throw "Cannot inspect cleanup state." }
+        $owned = $listed.sessions | Where-Object { $_.sessionId -eq $sessionId }
+        if (-not $owned -or -not $owned.canClose) { throw "Session missing or busy; inspect before shutdown." }
+        $close = @('-q', 'session', 'close', '--session', $sessionId)
+        if ($save) { $close += '--save' }
+        excelcli @close
+        if ($LASTEXITCODE -ne 0) { throw "Close failed; inspect the surviving session." }
+    }
+    catch {
+        if ($jobError) {
+            Write-Error "Cleanup also failed after $($jobError.Exception.Message): $_" -ErrorAction Continue
+        }
+        else { throw }
+    }
+}
 ```
-1. Load table (powerquery load-to with `load_destination="data-model"`)
-2. THEN create relationships (datamodel_relationship with create-relationship action)
-3. THEN create measures (datamodel create-measure)
-```
-Skipping step 1 causes "table not found" errors.
 
-### Power Query Development Lifecycle
-```
-1. powerquery evaluate (test M code without persisting - catches errors early)
-2. powerquery create/update (store validated query in workbook)
-3. powerquery refresh/load-to (load data to destination)
-```
-Skipping step 1 causes broken queries in workbook and cryptic COM errors.
-
-### Parameter Setup for Power Query
-```
-1. worksheet create (e.g., "_Setup")
-2. range set-values (parameter values)
-3. namedrange create (named reference)
-```
-Power Query reads via `Excel.CurrentWorkbook(){[Name = "..."]}`
-
-## Verification Commands
-
-```
-After Power Query: powerquery list, powerquery view
-After refresh:     datamodel list-tables
-After measure:     datamodel list-measures, datamodel evaluate
-After relationship: datamodel_relationship list-relationships
-After chart/layout: screenshot(capture, range_address='A1:M50') (visual verification)
-```
+Normal daemon shutdown may save remaining sessions; it is not failure cleanup.
+Report cleanup failures rather than killing Excel or claiming rollback.
+See [recovery](/reference/behavioral-rules/#sessions-and-failures).

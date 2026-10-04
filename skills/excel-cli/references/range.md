@@ -1,196 +1,238 @@
-> **CLI syntax note:** This shared domain guide may use MCP-style `tool(action: ...)` examples as conceptual shorthand. Do not translate or paste those calls mechanically. Use the exact commands and kebab-case options in [cli-commands.md](./cli-commands.md) or live `--help`; notably, MCP `file` open/close maps to CLI `session` open/close, and MCP `worksheet` maps to CLI `sheet`.
+<!-- Source: https://excelmcpserver.dev/reference/range/ (ExcelMcp 2.2.0 docs, MIT License, fetched 2026-10-05) -->
 
-# range - Number Formats and Cell Formatting
+# Ranges, Number Formats & Formatting
 
-**IMPORTANT: Always use US format codes.** The server automatically translates to the user's locale.
+Make targeted edits to the intended cells, preserving unrelated data and layout.
+Use CLI help or MCP tool descriptions for current command syntax and inputs.
+This guide explains choices that affect the workbook, not the command catalogue.
 
-**Discoverability note:** number display formats live on `range`; visual styling and auto-fit live on `range_format`.
+## Reusable cell styles
 
-## Formatting Split Across Two Tools
+Use an existing style when it expresses the requested meaning. A custom cell
+style can capture a visible source cell's formatting without changing that cell;
+apply it separately to the intended destinations.
 
-| Use | Tool | Action | When |
-|-----|------|--------|------|
-| Semantic status / document hierarchy | `range_format` | `set-style` | `Good`/`Bad`/`Neutral` (have fills, theme-aware); `Heading 1/2/3`; `Normal` to reset |
-| Coloured header rows / custom branding | `range_format` | `format-range` | Any fill colour, custom font colour, alignment — Heading styles have NO fill |
-| Repeated shared styling across disjoint ranges | `range_format` | `format-ranges` | Same worksheet, same formatting payload, fewer round-trips |
-| Number display format | `range` | `set-number-format` / `set-number-formats` | Dates, currency, percentages, text display |
-| Auto-fit layout | `range_format` | `auto-fit-columns` / `auto-fit-rows` | After writing variable-width data or wrapped text |
+Changing a shared custom definition can affect every cell that uses it.
+Deleting the style removes its name from existing users, with Excel deciding
+what formatting remains. Built-in definitions are inspectable but not editable
+through the custom-style lifecycle. Hidden source sheets are not made visible
+as a workaround.
 
-If you are looking for percentage, currency, date, or text display formatting, use `range`, not `range_format`.
-If you are looking for auto-fit, width, height, borders, fill, or font styling, use `range_format`.
-If you need the same styling on multiple non-contiguous ranges, use `format-ranges` instead of repeating `format-range`.
+## Reusable table and dashboard styles
 
-## Formula Compatibility
+Table, PivotTable, slicer, and timeline styles share workbook definitions.
+Clone a suitable definition when a reusable custom style is requested, then
+apply it through the owning object's formatting controls.
 
-Both CLI and MCP check `Range.Formula2` support with a read-only probe once per
-session. Supported Excel keeps modern dynamic-array behavior. Older Excel uses
-`Range.Formula` for formula reads and writes, including formulas passed through
-`set-values` and formula details in `get-values` errors.
+These definitions support less formatting than ordinary cells. An unset
+element is different from an element with explicit formatting, and Excel can
+leave native properties unset after a change. Inspect the actual definition
+before assuming that every requested property has been stored.
 
-The legacy path uses implicit intersection: a formula that refers to several
-cells may resolve to one value rather than spill, including inside tables.
-It does not add newer functions or dynamic arrays to Excel 2016/2019. Use
-formulas supported by the installed Excel version. Invalid formulas and
-protected-cell write errors still fail; they do not trigger a legacy retry.
+Custom updates can affect all existing users; deletion can remove their
+formatting. Neither is a local change to just the selected report. Saving
+remains explicit, and a native failure does not promise rollback.
 
-## Formula Errors in Range Reads
+## Cell protection
 
-`get-values` and `get-formulas` return formula errors in their `values` arrays as
-canonical Excel names such as `#REF!`, `#N/A`, and `#DIV/0!`, not raw negative
-COM integers. Both results also include cell error details with the affected
-cell, full formula text when Excel exposes it, raw error code, explanation,
-and suggested fix.
+Locked cells and hidden formulas are enforced through worksheet protection.
+Changing those cell flags alone does not protect the sheet. Formula hiding
+affects Excel's UI, not tool inspection or file encryption; it is not secret
+storage. See [worksheet protection](/reference/worksheet/#protection-permissions).
 
-Excel COM does not reliably identify the exact broken part of a reference.
-Use the returned cell address and full formula rather than inferring a
-sub-reference that Excel did not provide.
+## Row and column visibility
 
-## Quick Pattern: Write, Format, Auto-Fit
+Visibility changes affect whole intersecting rows or columns, not just the
+selected cells. Disjoint gaps remain unchanged. Hiding preserves stored
+dimensions, although native size reads can report zero while hidden.
 
-```
-range(action: 'set-values', range_address: 'A1:D4', values: [[...], [...]])
-range(action: 'set-number-format', range_address: 'C2:D4', format_code: '$#,##0.00')
-range_format(action: 'auto-fit-columns', range_address: 'A:D')
-```
+Excel cannot reliably distinguish manual hiding, filtering, zero size, and
+collapsed groups. Filter and outline information provides context, not proof
+of the cause. Showing rows does not clear filters or groups; those can hide
+them again. Protection is not bypassed.
 
-## Writes to Merged Cells
+## Protected writes and copies
 
-`set-values` and `set-formulas` reject writes that include merged cells unless the target is only the merged range's top-left cell. The error lists the affected merged ranges. Write to that top-left cell when changing one merged value, or unmerge the range before writing a larger grid.
+Content writes reject occupied direct destinations unless intentional replacement
+is authorized. Values, whitespace, zero, false, errors, and formulas displaying
+empty text are occupied. The same-value replacement is still an overwrite.
+Formatting alone does not make a truly empty cell occupied.
 
-## Quick Pattern: Repeated Section Headers
+After rejection, correct the destination or clarify unresolved intent. Do not
+automatically grant overwrite permission, clear conflicting cells, or repeat
+a confirmation when replacement was already requested. Failed inspection does
+not establish that a destination is empty.
 
-Use `format-ranges` when the same header or section style repeats across disjoint ranges on one sheet:
+Copy scope can be larger than its starting address: a single-cell destination
+expands to the source size, and larger destinations repeat the paste. Check the
+full bounds and the effect of transposing. Copies require unmerged rectangular
+areas with compatible dimensions.
 
-```
-range_format(action: 'format-ranges',
-    range_addresses: ['A1:G1', 'A12:G12', 'A24:G24'],
-    bold: true,
-    fill_color: '#243F60',
-    font_color: '#FFFFFF',
-    horizontal_alignment: 'center')
-```
+Choose a content-only copy when formatting must remain unchanged. Formula
+paste can also copy constants and blanks. Formats-only copying preserves
+content but can transfer protection and conditional rules; validation-only
+copying preserves content and visual formatting. Skipping empty source cells
+does not skip formulas that merely display empty text.
 
-All target ranges are validated before formatting begins. If any target range is invalid, nothing is formatted.
+Value and formula data must match the destination rectangle. Permission to
+replace contents does not bypass sheet protection. Checks do not predict
+future spills or Table-generated changes outside the direct destination.
+Interactive edits remain possible, and a later Excel error can leave partial
+changes. Copying uses Excel's clipboard; saving remains explicit.
 
-## Quick Pattern: Header Row With Fill Colour
+## Number formats and layout
 
-`set-style('Heading 1')` does **not** apply a fill — use `format-range` for coloured headers.
-Pass ALL properties in **one call**:
+Display formatting is not data conversion. A percentage format does not turn
+45 into 0.45, and a date format does not convert arbitrary text into dates.
+Choose units and formats from the column's meaning, not its magnitude.
+See [report formatting](/reference/report-formatting/) for practical examples.
 
-```
-range_format(action: 'format-range', range_address: 'A1:D1',
-    bold: true,
-    fill_color: '#4472C4',
-    font_color: '#FFFFFF',
-    horizontal_alignment: 'center')
-```
+Use US number-format codes. Excel translates display separators for the user's
+locale; different separators in a screenshot are not necessarily an error.
+Read-back codes may change literal escaping while keeping the same meaning.
+Explicit currency symbols remain explicit.
 
-## Quick Pattern: Semantic Status Cells
+Widen columns when values show `#####`, unless a fixed template layout must
+be preserved. Wrapped text may also need row auto-fit. Heading styles do not
+necessarily include a colored fill; choose formatting that suits the request.
 
-Use `set-style` when the meaning (Good/Bad/Neutral) matters and theme-awareness is useful:
+Inspect stored formatting when maintaining a template, and displayed formatting
+when conditional rules affect appearance. A mixed-style range has no single
+style: a summary fallback is not proof that every cell uses that style. Use
+per-cell inspection when the distinction matters.
 
-```
-range_format(action: 'set-style', range_address: 'B2:B10', style_name: 'Good')
-range_format(action: 'set-style', range_address: 'C2:C10', style_name: 'Bad')
-```
+Validation replacement can remove the old rule before Excel rejects the new
+one. Inspect the resulting rule after failure rather than assuming the previous
+validation survived.
 
-## format-range Properties
+## Data validation
 
-| Property | Type | Example |
-|----------|------|---------|
-| `bold` | bool | `true` |
-| `italic` | bool | `true` |
-| `underline` | bool | `true` |
-| `font_size` | number | `14` |
-| `font_name` | string | `"Calibri"` |
-| `font_color` | hex color | `"#FFFFFF"` |
-| `fill_color` | hex color | `"#4472C4"` |
-| `horizontal_alignment` | string | `"center"`, `"left"`, `"right"` |
-| `vertical_alignment` | string | `"middle"`, `"top"`, `"bottom"` |
-| `wrap_text` | bool | `true` |
-| `border_style` | string | `"thin"`, `"medium"`, `"thick"` |
-| `border_color` | hex color | `"#000000"` |
-| `orientation` | int | `-90` to `90` (degrees) |
+MCP `range_format` action `validate-range` and CLI `rangeformat validate-range`
+replace the target's existing validation rule. Invalid validation types,
+comparison operators, and error styles are rejected before removing that rule.
+This does not promise rollback for errors Excel raises while applying a rule.
 
-## set-style Presets
+Explicit `show_input_message: false` / `--show-input-message false` and
+`show_error_alert: false` / `--show-error-alert false` disable those messages.
+Omitting these settings uses the documented defaults: input messages off,
+error alerts on. Blank cells are allowed and list dropdowns are shown by default.
+Use `get-validation` to inspect the resulting rule and message settings.
 
-Built-in style names: `Normal`, `Heading 1`, `Heading 2`, `Heading 3`, `Heading 4`, `Title`, `Good`, `Bad`, `Neutral`, `Currency`, `Percent`, `Comma`
+## Formulas and merged cells
 
-```
-range_format(action: 'set-style', range_address: 'A1:D1', style_name: 'Heading 1')
-```
+Formula notation and cell-address notation are separate. Relative row/column
+formulas are interpreted from each destination cell; changing their notation
+does not change how target addresses are supplied.
 
-## Format Codes
+Write a single merged value at the merged area's top-left cell. A grid write
+intersecting merged cells can fail; unmerge only when that change is requested,
+not as an automatic repair to a template.
 
-| Type | Code | Example (en-US) |
-|------|------|-----------------|
-| Number | `#,##0.00` | 1,234.56 |
-| Dollar | `$#,##0.00` | $1,234.56 |
-| Euro | `€#,##0.00` | €1,234.56 |
-| Pound | `£#,##0.00` | £1,234.56 |
-| Yen | `¥#,##0` | ¥1,235 |
-| Percent | `0.00%` | 12.34% |
-| Date (ISO) | `yyyy-mm-dd` | 2023-03-15 |
-| Date (US) | `mm/dd/yyyy` | 03/15/2023 |
-| Date (EU) | `dd/mm/yyyy` | 15/03/2023 |
-| Time | `h:mm AM/PM` | 2:30 PM |
-| Time (24h) | `hh:mm:ss` | 14:30:00 |
-| Text | `@` | (as-is) |
+## Ordinary-range and advanced filtering
 
-All format codes are auto-translated to the user's locale. Use US codes (d/m/y for dates, . for decimal, , for thousands).
+Use the existing Table's filter when data is already a Table. Ordinary-range
+filtering applies to an exact header-and-data rectangle and does not silently
+replace a different filter elsewhere on the sheet.
 
-**The `Example` column assumes en-US regional settings — rendering is locale-dependent.** Excel
-interprets the `,` and `.` in a format code according to the user's locale, and the same is true of
-the `d`/`m`/`y` date codes. So `$#,##0.00` displays as `$1,234.56` on en-US but `$1.234,56` on de-DE,
-and `mm/dd/yyyy` follows the locale's date separator. This is correct behaviour, not a bug — do not
-rewrite a format code because a screenshot shows swapped separators, and do not tell the user a
-literal rendering without accounting for their regional settings.
+Excel can normalize selected values into comparisons or combined criteria.
+Read the actual criteria and visible rows rather than comparing the request's
+original spelling with readback. Clearing ordinary criteria retains dropdowns.
 
-After applying a number format, run `range_format auto-fit-columns` — formatted values are wider
-than raw ones and will render as `#####` at the default column width.
+Advanced filtering uses worksheet criteria and can filter in place or copy
+results. Copied-output protection checks can cover more rows than ultimately
+match. Excel does not expose the original advanced-filter criteria for faithful
+readback. Clearing that state can affect worksheet-wide row filtering, so
+authorize it explicitly rather than silently replacing it with an ordinary filter.
 
-## Actions
+## Native data cleanup
 
-**SetNumberFormat**: Apply one format to entire range.
+Choose duplicate keys and header handling deliberately. Duplicate removal keeps
+the first record for those keys, including blank records, and clears removed
+rows within the selection rather than shifting cells below it.
 
-- `format_code`: Format code from table above
+For text-to-columns, protect identifiers, leading zeros, and dates from unwanted
+conversion. Excel parses source formula text, not calculated formula results.
+Check the full output area, including empty fields. Parsing in place can replace
+the source; a separate output can overwrite neighboring data and needs permission
+where occupied.
 
-**SetNumberFormats**: Apply different formats per cell.
+Preflight uses a short-lived, unsaved calculation workbook containing the
+requested data, not a saved recovery copy. Native failures do not promise
+rollback or bypass protection.
 
-- `formats`: 2D array matching range dimensions
-- Example: `[["$#,##0.00", "0.00%"], ["mm/dd/yyyy", "General"]]`
+## Native fill and series
 
-## Threaded Comments (`range_link`)
+Copying a source edge and extending a pattern are different tasks. Pattern
+extension includes the source and grows in one direction on the same sheet.
+Formats-only extension preserves contents.
 
-Use modern threaded comments only when the installed desktop Excel build exposes them:
+Trend fitting can change source values, so treat it as an intentional
+replacement. Series safety checks can cover the whole possible destination
+even if Excel stops early. Inspect the generated values rather than assuming
+a successful call establishes the intended pattern.
 
-```text
-range_link(action: 'add-threaded-comment', sheet_name: 'Review', cell_address: 'B2', text: 'Check this value')
-range_link(action: 'add-threaded-comment-reply', sheet_name: 'Review', cell_address: 'B2', text: 'Confirmed')
-range_link(action: 'list-threaded-comments', sheet_name: 'Review', cell_address: 'B2')
-range_link(action: 'delete-threaded-comment', sheet_name: 'Review', cell_address: 'B2')
-```
+## Native formula relationships
 
-These actions expose local Excel PIA comment text, author, date, and replies. Microsoft 365 service features such as @mentions, assignments, reactions, presence, sharing, and coauthoring state are not available through local Excel COM.
+Native relationship inspection is not a complete workbook dependency graph.
+It can omit cross-sheet and external references, miss dynamic references, or
+report only an anchor rather than the effective target. An empty relationship
+list does not prove that a cell has no dependencies.
 
-## Related `range_format` Actions
+Use the reported coverage and unresolved lookups. Inspection does not parse
+formulas to invent missing links, recalculate, open external workbooks, select
+cells, or create tracing arrows.
 
-- `auto-fit-columns`: Fit column widths to content after writing data
-- `auto-fit-rows`: Fit row heights to wrapped or multi-line content
-- `format-range`: Apply fills, fonts, borders, and alignment
-- `format-ranges`: Apply one shared formatting payload to multiple ranges on the same worksheet
-- `set-style`: Apply named Excel styles such as `Good`, `Bad`, or `Heading 1`
+## Calculation and merged cells
 
-## Hyperlink Lifecycle
+Calculate and read back results when the task depends on newly written formulas.
+Writes attempt to restore the previous calculation mode, but restoration can
+fail without failing the write. See [calculation guidance](/reference/calculation/).
 
-Use `range_link` for cell hyperlinks:
+Newer formula support depends on the Excel session. Using a legacy formula API
+does not add modern functions to an older Excel installation, and failures are
+not repaired by blindly retrying another notation.
 
-| Action | Purpose |
-|--------|---------|
-| `add-hyperlink` | Add an external URL/file link or an internal workbook target |
-| `update-hyperlink` | Change an existing target, display text, or tooltip |
-| `get-hyperlink` | Read the hyperlink in one cell |
-| `list-hyperlinks` | List all hyperlinks on a worksheet |
-| `remove-hyperlink` | Remove hyperlinks while preserving cell content |
+Read cell-error details when formulas fail. Excel cannot always identify the
+exact broken sub-reference. Spill inspection reflects current calculated state;
+a blocked spill has no established intended output extent. Do not infer that
+extent from an error or claim fresh results without calculation.
 
-For an internal link, omit `url` and pass a `sub_address` such as `'Summary'!A1`. For partial updates, omitted values remain unchanged; pass an empty string to clear the URL, sub-address, or tooltip.
+## Clearing ranges
+
+Choose whether to remove contents, formats, or both. Clearing has no tool-level
+undo. Discarding unsaved changes can reverse in-memory edits, but also loses
+earlier unsaved work; it is not targeted undo.
+
+## Finding matches
+
+Choose text search for matching text and cell-category discovery for formulas,
+errors, truly blank cells, or visible cells. Formulas displaying empty text
+are not blanks, and visible-cell discovery excludes hidden rows and columns.
+
+Search can return only part of its cell details while still reporting the exact
+total. Check truncation before calling a list complete. Limiting returned
+details does not limit the work required to count all matches.
+
+## Links, comments, and names
+
+Removing a hyperlink preserves its cell content. Internal links depend on real
+sheet names and cell references.
+
+Threaded comments require a supporting desktop Excel version. Local text and
+replies are not Microsoft 365 mentions, assignments, reactions, sharing, or
+coauthoring state.
+
+Named ranges refer to cells. Define the reference before writing its value.
+Discovery omits internal/hidden names and can omit large value previews; read
+the intended name when values are needed. Changing a query parameter does not
+itself refresh its load.
+
+## Dates and reference spelling
+
+Excel date serials are not Unix timestamps or Python ordinals. Check the
+workbook's date system before external conversion, including the historical
+1900 leap-year exception. Prefer display formatting when only readable dates
+are needed.
+
+Use actual worksheet names. In an Excel formula reference, a name with spaces
+uses `'Sales Data'!A1`, not backticks.
