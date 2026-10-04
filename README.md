@@ -9,7 +9,7 @@
 
 你选择 Excel 文件，插件把它**前台可见地打开**；AI 通过命令行工具对同一个 Excel 增删改查（数据、表格、图表、透视表、Power Query、DAX、VBA……），你全程看得到每一步；插件同步引擎让 **VBA 代码在 Excel 与编辑器之间双向实时同步**——你在 Excel 里手改宏，编辑器里立刻出现；AI 改宏、跑宏、报错弹窗自动抓取，形成完整的 AI 宏开发闭环。
 
-> 当前版本：**v0.9.4** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
+> 当前版本：**v0.9.6** ｜ [下载安装包](https://github.com/martin94zh/excel-vba-assistant/releases/latest)
 
 ---
 
@@ -86,7 +86,7 @@
 
 **方式 A：下载安装包（推荐）**
 
-1. 下载 [excel-vba-assistant-0.9.4.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.4/excel-vba-assistant-0.9.4.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
+1. 下载 [excel-vba-assistant-0.9.6.vsix](https://github.com/martin94zh/excel-vba-assistant/releases/download/v0.9.6/excel-vba-assistant-0.9.6.vsix)（内置 excelcli.exe，**无需联网、无需 Node.js**）
 2. Trae / VS Code 中按 `Ctrl+Shift+P` → **Extensions: Install from VSIX...** → 选择文件
 3. 重新加载窗口
 
@@ -96,7 +96,7 @@
 git clone https://github.com/martin94zh/excel-vba-assistant.git
 cd excel-vba-assistant
 npm install
-npm run package    # 生成 excel-vba-assistant-0.9.4.vsix
+npm run package    # 生成 excel-vba-assistant-0.9.6.vsix
 ```
 
 ### 六步上手
