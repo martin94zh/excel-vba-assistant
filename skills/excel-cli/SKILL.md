@@ -28,6 +28,11 @@ compatibility: Requires Windows and Microsoft Excel 2016 or later. Node.js 18+ i
 > - 新增动作示例：`range get-special-cells` / `get-spill-info` / `trace-precedents` / `trace-dependents`、`rangeformat get-format`。
 > 遇到任何命令报"Unknown action/option"时，立即用 `excelcli <命令组> --help` 查看该版本的真实动作与参数，不要凭记忆重试。
 
+> **性能守则（务必遵守）**：excelcli 是大体量自包含可执行文件，**每次进程启动实测需要 5~15 秒**，`npx` 方式每次还要额外 5~10 秒的包解析（且弱网下更久）。因此：
+> - 多于 2 条的顺序命令（如 open → 读 → 写 → close）**必须用 batch 模式**（见 Rule 8），把整段任务压进一次进程；
+> - 若环境里 `excelcli` 不在 PATH 且任务需要多条命令，先执行一次 `npm install -g @sbroenne/excelcli`（可顺带告知用户），不要用反复 npx 硬扛；
+> - 单进程内的失败重试优先于整段放弃：batch 结果是逐条 NDJSON，按 index 检查哪条失败。
+
 # Excel Automation with excelcli
 
 ## Preconditions
