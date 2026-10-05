@@ -1,0 +1,7 @@
+{
+  "name": "excel-vba-cli",
+  "version": "0.1.0",
+  "description": "Excel automation skill for coding agents: drives real Microsoft Excel via the excelcli CLI (Power Query, DAX, PivotTables, Tables, Ranges, Charts, VBA, screenshots - 31 command groups / 387 operations). Shares sessions with the Excel VBA Assistant VS Code/Trae extension through a single-instance daemon.",
+  "author": { "name": "Excel VBA Assistant Contributors" },
+  "skills": "./skills"
+}
