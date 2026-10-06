@@ -28,6 +28,7 @@
   - [断开与清理](#7-断开与清理)
 - [完整能力清单（387 操作）](#完整能力清单387-操作)
 - [控制面板与命令参考](#控制面板与命令参考)
+- [在 Codex / ZCode 等 Agent 客户端中使用](#在-codex--zcode-等-agent-客户端中使用)
 - [环境要求与安全设置](#环境要求与安全设置)
 - [常见问题](#常见问题)
 - [安全说明](#安全说明)
@@ -320,6 +321,22 @@ AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基�
 `选择 Excel 文件`、`选择本地同步目录`、`使用当前工作区作为同步目录`、`使用 Excel 相同目录`、`断开 Excel`、`VBE → 本地 同步`、`本地 → VBE 同步`、`切换自动同步`、`切换自动执行 VBA`、`运行宏`、`排列 Excel 窗口（分屏）`、`刷新资源`、`打开输出日志`、`同步 Skill 到工作区`、`复制 excelcli 路径与常用命令`
 
 > 宏运行与同步期间，Excel 状态栏会显示实时进度（如"正在运行宏 Module1.Main..."），完成后自动恢复；`排列 Excel 窗口（分屏）` 可把 Excel 摆到左/右半屏或全屏，边看边等 AI 干活。
+
+---
+
+## 在 Codex / ZCode 等 Agent 客户端中使用
+
+本仓库同时是一个 **Agent 插件市场**：`excel-vba-cli` 插件把 excel-cli 技能（31 组命令 / 387 操作参考手册 + 领域指南）带给不装 VSIX 的编码 agent。
+
+**安装（ZCode）**：Plugin Marketplace → Add → Add Plugin Marketplace → 输入 `martin94zh/excel-vba-assistant` → 安装 **excel-vba-cli**。
+
+**安装（Codex 等其他 agent）**：把 [`plugins/excel-vba-cli/skills/excel-cli/`](plugins/excel-vba-cli/skills/excel-cli/) 整个目录拷入 `~/.agents/skills/`；或直接用官方安装器 `npx skills add sbroenne/mcp-server-excel --skill excel-cli`（本插件版本额外包含 2.2.0 破坏性变更警示与 387 操作参数表）。
+
+**前置**：`npm install -g @sbroenne/excelcli`，让 `excelcli` 进入 PATH（excelcli 是大体量单文件程序，每次进程启动需数秒，**避免用 npx 反复调用**；多于 2 条的顺序命令技能会引导 agent 走 batch 模式，单进程完成整段任务）。
+
+**与 VSIX 扩展协作**：两者经同一个单实例 daemon 共享会话——Trae/VS Code 里插件打开的前台工作簿，agent 用 `excelcli -q session list` 即可接管。VBE 双向同步与宏运行桥仅在 VSIX 扩展中可用。
+
+> 版本更新：插件清单（`plugins/excel-vba-cli/.zcode-plugin/plugin.json`）升版本号并推送后，用户在市场里刷新即可更新。
 
 ---
 

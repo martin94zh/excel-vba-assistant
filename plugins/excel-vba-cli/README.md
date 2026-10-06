@@ -23,6 +23,12 @@ agent 用 `excelcli -q session list` 即可接管；反之亦然。VBE 双向同
 
 ## 本地测试
 
-本目录附带 `marketplace.json`（dev 市场）。在 ZCode 中：
-Plugin Marketplace → Add → Add Plugin Marketplace → 选择本 `plugins/` 目录 →
+本目录附带 `plugins/marketplace.json`（dev 市场）。在 ZCode 中：
+Plugin Marketplace → Add → Add Plugin Marketplace → 选择本仓库的 `plugins/` 目录 →
 安装 excel-vba-cli。
+
+## 公开分发
+
+仓库根目录的 `marketplace.json` 使本仓库可直接作为 ZCode 插件市场添加：
+Plugin Marketplace → Add → Add Plugin Marketplace → 输入 `martin94zh/excel-vba-assistant`。
+发布新版 = 更新 `.zcode-plugin/plugin.json` 的版本号并推送，用户在市场刷新后即可更新。
