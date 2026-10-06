@@ -1,0 +1,15 @@
+{
+  "name": "excel-vba-assistant",
+  "plugins": [
+    {
+      "name": "excel-vba-cli",
+      "source": "./plugins/excel-vba-cli",
+      "version": "0.1.1",
+      "description": "Excel automation skill for coding agents: drives real Microsoft Excel via the excelcli CLI (Power Query, DAX, PivotTables, Tables, Ranges, Charts, VBA, screenshots - 31 command groups / 387 operations). Shares sessions with the Excel VBA Assistant VS Code/Trae extension through a single-instance daemon.",
+      "displayName": "Excel VBA CLI Skill",
+      "displayName_i18n": { "zh-CN": "Excel CLI 自动化技能" },
+      "description_i18n": { "zh-CN": "面向编码 agent 的 Excel 自动化技能：通过 excelcli 命令行驱动真实 Excel（Power Query、DAX、透视表、表格、区域、图表、VBA、截图——31 组命令 / 387 操作）。经单实例 daemon 与 Excel VBA Assistant VS Code/Trae 扩展共享会话。" },
+      "category": "developer-tools"
+    }
+  ]
+}

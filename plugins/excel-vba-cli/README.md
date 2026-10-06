@@ -29,6 +29,11 @@ Plugin Marketplace → Add → Add Plugin Marketplace → 选择本仓库的 `pl
 
 ## 公开分发
 
-仓库根目录的 `marketplace.json` 使本仓库可直接作为 ZCode 插件市场添加：
-Plugin Marketplace → Add → Add Plugin Marketplace → 输入 `martin94zh/excel-vba-assistant`。
+仓库根目录同时提供 `.claude-plugin/marketplace.json`（跨工具标准位置）与根级 `marketplace.json`，
+使本仓库可直接作为 ZCode 插件市场添加：
+Plugin Marketplace → Add → Add Plugin Marketplace → 粘贴 `https://github.com/martin94zh/excel-vba-assistant`。
 发布新版 = 更新 `.zcode-plugin/plugin.json` 的版本号并推送，用户在市场刷新后即可更新。
+
+**全新机器最简路线（无需市场）**：`git clone` 本仓库后，把
+`plugins/excel-vba-cli/skills/excel-cli/` 拷入 `~/.agents/skills/` 即可
+（ZCode 与 Codex 均扫描该用户级标准位置）。

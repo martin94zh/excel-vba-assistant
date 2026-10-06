@@ -328,9 +328,12 @@ AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基�
 
 本仓库同时是一个 **Agent 插件市场**：`excel-vba-cli` 插件把 excel-cli 技能（31 组命令 / 387 操作参考手册 + 领域指南）带给不装 VSIX 的编码 agent。
 
-**安装（ZCode）**：Plugin Marketplace → Add → Add Plugin Marketplace → 输入 `martin94zh/excel-vba-assistant` → 安装 **excel-vba-cli**。
+**安装（ZCode，两条路线任选）**：
 
-**安装（Codex 等其他 agent）**：把 [`plugins/excel-vba-cli/skills/excel-cli/`](plugins/excel-vba-cli/skills/excel-cli/) 整个目录拷入 `~/.agents/skills/`；或直接用官方安装器 `npx skills add sbroenne/mcp-server-excel --skill excel-cli`（本插件版本额外包含 2.2.0 破坏性变更警示与 387 操作参数表）。
+- *路线 A·最简（推荐）*：`git clone https://github.com/martin94zh/excel-vba-assistant.git`，然后把 `plugins/excel-vba-cli/skills/excel-cli/` 整个目录拷入 `~/.agents/skills/`。ZCode 会扫描该目录（用户级技能标准位置），装完即用；更新 = `git pull` 后重新拷贝。
+- *路线 B·市场（便于更新）*：Plugin Marketplace → Add → Add Plugin Marketplace → 粘贴 `https://github.com/martin94zh/excel-vba-assistant` → 安装 **excel-vba-cli**。仓库根目录同时提供 `.claude-plugin/marketplace.json`（跨工具标准位置）与根级 `marketplace.json`。若你的客户端该入口只接受本地目录，用路线 A。
+
+**安装（Codex 等其他 agent）**：路线 A 同样适用（`~/.agents/skills/` 是 Codex/ZCode 等共享的标准位置）；或用官方安装器 `npx skills add sbroenne/mcp-server-excel --skill excel-cli`（本插件版本额外包含 2.2.0 破坏性变更警示与 387 操作参数表）。
 
 **前置**：`npm install -g @sbroenne/excelcli`，让 `excelcli` 进入 PATH（excelcli 是大体量单文件程序，每次进程启动需数秒，**避免用 npx 反复调用**；多于 2 条的顺序命令技能会引导 agent 走 batch 模式，单进程完成整段任务）。
 
