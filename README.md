@@ -332,8 +332,9 @@ AI 可用的 31 组命令（另有 `session` / `batch` / `service` / `diag` 基�
 
 - *路线 A·最简（推荐）*：`git clone https://github.com/martin94zh/excel-vba-assistant.git`，然后把 `plugins/excel-vba-cli/skills/excel-cli/` 整个目录拷入 `~/.agents/skills/`。ZCode 会扫描该目录（用户级技能标准位置），装完即用；更新 = `git pull` 后重新拷贝。
 - *路线 B·市场（便于更新）*：Plugin Marketplace → Add → Add Plugin Marketplace → 粘贴 `https://github.com/martin94zh/excel-vba-assistant` → 安装 **excel-vba-cli**。仓库根目录同时提供 `.claude-plugin/marketplace.json`（跨工具标准位置）与根级 `marketplace.json`。若你的客户端该入口只接受本地目录，用路线 A。
+- *路线 C·对话式*：直接把仓库地址发给 agent 客户端，例如：**「安装 https://github.com/martin94zh/excel-vba-assistant 这个 Excel 自动化插件：按它 README 的安装说明把 agent 技能装到你所在的环境，并确保 excelcli 命令可用（没有就 npm install -g @sbroenne/excelcli），装完验证 excelcli --version」**——agent 会克隆、读说明、装技能、装运行时并自验。本仓库的 README 与标准清单（`.zcode-plugin/plugin.json`、`.claude-plugin/marketplace.json`）就是为"让 AI 照做"而写的。
 
-**安装（Codex 等其他 agent）**：路线 A 同样适用（`~/.agents/skills/` 是 Codex/ZCode 等共享的标准位置）；或用官方安装器 `npx skills add sbroenne/mcp-server-excel --skill excel-cli`（本插件版本额外包含 2.2.0 破坏性变更警示与 387 操作参数表）。
+**安装（Codex 等其他 agent）**：路线 A、C 同样适用（`~/.agents/skills/` 是 Codex/ZCode 等共享的标准位置）；或用官方安装器 `npx skills add sbroenne/mcp-server-excel --skill excel-cli`（本插件版本额外包含 2.2.0 破坏性变更警示与 387 操作参数表）。
 
 **前置**：`npm install -g @sbroenne/excelcli`，让 `excelcli` 进入 PATH（excelcli 是大体量单文件程序，每次进程启动需数秒，**避免用 npx 反复调用**；多于 2 条的顺序命令技能会引导 agent 走 batch 模式，单进程完成整段任务）。
 
